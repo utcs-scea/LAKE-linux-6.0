@@ -11,6 +11,11 @@
 #include <linux/device.h>
 #include <linux/ktime.h>
 
+#ifdef LAKE_LINNOS
+#include <linux/time.h>
+#define NR_IO_TYPES 2
+#endif
+
 struct bio_set;
 struct bio;
 struct bio_integrity_payload;
@@ -252,6 +257,20 @@ typedef unsigned int blk_qc_t;
 struct bio {
 	struct bio		*bi_next;	/* request queue link */
 	struct block_device	*bi_bdev;
+	
+#ifdef LAKE_LINNOS
+	/* For MLOS: IO timestamps */
+	bool 				bi_first;		/* first time make_request_fn? */
+	bool 				bi_ebusy;		/* bio ebusy? */
+	unsigned int 		bi_op_type;		/* bio operation type*/
+	sector_t			bi_sec_off;		/* bio offset in sectors */
+	unsigned int 		bi_sec_size;	/* bio size in sectors */
+	struct timespec 	bi_ts_start;	/* bio start time */
+	struct timespec 	bi_ts_end;		/* bio end time */
+	unsigned int 		bi_nr_io4k[NR_IO_TYPES];		/* number of 4k IOs in queue */
+	/* end */
+#endif
+	
 	blk_opf_t		bi_opf;		/* bottom bits REQ_OP, top bits
 						 * req_flags.
 						 */

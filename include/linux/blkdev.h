@@ -385,7 +385,80 @@ struct blk_independent_access_ranges {
 	struct blk_independent_access_range	ia_range[];
 };
 
+#ifdef LAKE_LINNOS
+	/* For MLOS: history IO info tracking */
+	#define TARGET_DRIVE "nvme0n1"
+	#define NR_IO_TYPES 2	/* only record read=0 and write=1 */
+
+	// define the length of pending
+	#define PENDING_3
+	#ifdef PENDING_3
+		#define LEN_PAD_PENDING__ 3
+		#define MAX_PENDING 999
+	#endif
+	#ifdef PENDING_4
+		#define LEN_PAD_PENDING__ 4
+		#define MAX_PENDING 9999
+	#endif
+
+	// #define DIS_RW
+	#ifdef DIS_RW
+		#define LEN_PAD_PENDING (LEN_PAD_PENDING__+LEN_PAD_PENDING__)
+	#else
+		#define LEN_PAD_PENDING LEN_PAD_PENDING__
+	#endif
+
+	// define the length of latency
+	#define LATENCY_4
+	#ifdef LATENCY_4
+		#define LEN_PAD_LATENCY 4
+		#define MAX_LATENCY 9999
+	#endif
+	#ifdef LATENCY_5
+		#define LEN_PAD_LATENCY 5
+		#define MAX_LATENCY 99999
+	#endif
+#endif
+
+// #define LEN_PAD_LATENCY 5
+struct ml_io_info {
+
+	unsigned int 		nr_io_4k_ss[NR_IO_TYPES];	/* The snapshot of 4k IOs in queue */
+	// unsigned int 		nr_io_4k_ss;
+
+	// unsigned short 		type;
+	unsigned int 		sec_size;
+	sector_t 			sectors;
+	unsigned long 		latency;
+
+	char 				pad_pending[LEN_PAD_PENDING+1];
+	char 				pad_latency[LEN_PAD_LATENCY+1];
+};
+#define HIS_IO_QSIZE 4
+/* end */
+
+
+
+
 struct request_queue {
+
+#ifdef LAKE_LINNOS
+	/* For MLOS: ML model info */
+	bool 				ml_enabled;
+	long 				*weight_0_T;
+	long 				*weight_1_T;
+	long 				*bias_0;
+	long 				*bias_1;
+	/* end */
+
+	/* For MLOS: history IO info tracking */
+	// bool 				nvme_endio;
+	unsigned int 		nr_io_4k[NR_IO_TYPES];
+	struct ml_io_info 	his_io_queue[NR_IO_TYPES][HIS_IO_QSIZE];
+	unsigned int 		his_q_index[NR_IO_TYPES];
+	spinlock_t			his_lock;
+#endif
+
 	struct request		*last_merge;
 	struct elevator_queue	*elevator;
 
@@ -583,6 +656,15 @@ struct request_queue {
 #define QUEUE_FLAG_MQ_DEFAULT	((1 << QUEUE_FLAG_IO_STAT) |		\
 				 (1 << QUEUE_FLAG_SAME_COMP) |		\
 				 (1 << QUEUE_FLAG_NOWAIT))
+
+#ifdef LAKE_LINNOS
+/* For MLOS: history queue atomic operations*/
+void his_queue_io4k_add(unsigned int op, long nr_io4ks, struct request_queue *q);
+void his_queue_io4k_add_ss(unsigned int op, long nr_io4ks, struct request_queue *q, 
+	struct bio *bio);
+void his_queue_padding(char *vec, unsigned long decimal, unsigned int len);
+#define his_q_index_inc(index, inc)	((index+inc)%HIS_IO_QSIZE)
+#endif
 
 void blk_queue_flag_set(unsigned int flag, struct request_queue *q);
 void blk_queue_flag_clear(unsigned int flag, struct request_queue *q);

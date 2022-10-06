@@ -45,6 +45,12 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/block.h>
 
+#ifdef LAKE_LINNOS
+#include "my_utils.h"
+#include "ml_const.h"
+// #include "ml_test.h"
+#endif
+
 #include "blk.h"
 #include "blk-mq-sched.h"
 #include "blk-pm.h"
@@ -72,6 +78,52 @@ struct kmem_cache *blk_requestq_srcu_cachep;
  * Controlling structure to kblockd
  */
 static struct workqueue_struct *kblockd_workqueue;
+
+#ifdef LAKE_LINNOS
+
+/* for MLOS: implementation of history queue atomic add operation */
+void inline his_queue_io4k_add(unsigned int op, long nr_io4ks, struct request_queue *q) {
+
+	if (q && (op>=0) && (op<NR_IO_TYPES)) {
+		spin_lock_irq(&(q->his_lock));
+		if ((q->nr_io_4k)[op] < (-nr_io4ks)) {
+			(q->nr_io_4k)[op] = 0;
+		}
+		else {
+			(q->nr_io_4k)[op] += nr_io4ks;
+		}
+		spin_unlock_irq(&(q->his_lock));
+	}
+}
+EXPORT_SYMBOL(his_queue_io4k_add);
+
+void inline his_queue_io4k_add_ss(unsigned int op, long nr_io4ks, struct request_queue *q, 
+	struct bio *bio) {
+
+	if (q && (op>=0) && (op<NR_IO_TYPES)) {
+		spin_lock_irq(&(q->his_lock));
+		(q->nr_io_4k)[op] += nr_io4ks;
+		// (q->his_io_queue)[op][(q->his_q_index)[op]].nr_io_4k_ss[op] = (q->nr_io_4k)[op];
+		bio->bi_nr_io4k[0] = q->nr_io_4k[0];
+		bio->bi_nr_io4k[1] = q->nr_io_4k[1];
+		spin_unlock_irq(&(q->his_lock));
+	}
+}
+
+void inline his_queue_padding(char *vec, unsigned long decimal, unsigned int len) {
+
+	int i;
+
+	for (i=len-1; i>=0; i--) {
+		// vec[i] = decimal % 10 + '0'; // for the sake of debugging;
+		vec[i] = decimal % 10;
+		decimal /= 10;
+	}
+}
+EXPORT_SYMBOL(his_queue_padding);
+
+#endif
+
 
 /**
  * blk_queue_flag_set - atomically set a queue flag
@@ -383,6 +435,19 @@ struct request_queue *blk_alloc_queue(int node_id, bool alloc_srcu)
 	if (!q)
 		return NULL;
 
+#ifdef LAKE_LINNOS
+	/* for MLOS: history info queue initialization */
+	q->nr_io_4k[0] = 0;
+	q->nr_io_4k[1] = 0;
+
+	q->his_q_index[0] = 0;
+	q->his_q_index[1] = 0;
+	// for (i=0; i<HIS_IO_QSIZE; i++) {
+	// 	q->
+	// }
+	/* end */
+#endif
+
 	if (alloc_srcu) {
 		blk_queue_flag_set(QUEUE_FLAG_HAS_SRCU, q);
 		if (init_srcu_struct(q->srcu) != 0)
@@ -413,6 +478,10 @@ struct request_queue *blk_alloc_queue(int node_id, bool alloc_srcu)
 	mutex_init(&q->sysfs_lock);
 	mutex_init(&q->sysfs_dir_lock);
 	spin_lock_init(&q->queue_lock);
+
+#ifdef LAKE_LINNOS
+	spin_lock_init(&q->his_lock);
+#endif	
 
 	init_waitqueue_head(&q->mq_freeze_wq);
 	mutex_init(&q->mq_freeze_lock);
@@ -550,6 +619,490 @@ static int blk_partition_remap(struct bio *bio)
 	return 0;
 }
 
+
+#ifdef LAKE_LINNOS
+
+static inline bool fake_prediction_model(unsigned int op, sector_t sec_offset, unsigned int sectors) {
+	const unsigned int OP_READ = 0;
+	if (op == OP_READ) {
+		if ((sectors > 512) || (sectors % 8 != 0) || (sec_offset % 8 != 0)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// return true for EBUSY, false for non-EBUSY
+// static bool prediction_model(char *feat_vec) {
+
+// 	long input_vec_i[LEN_INPUT], mid_res_i[LEN_LAYER_0], final_res_i[LEN_LAYER_1];
+// 	int i, j, k;
+
+// 	for (i=0 ; i<LEN_INPUT; i++) {
+// 		input_vec_i[i] = (long)(feat_vec[i]);
+// 		// input_vec_i[i] = (long)(test_input[index][i]);
+// 	}
+
+// 	for (j = 0; j < LEN_LAYER_0; j++) {
+//         mid_res_i[j] = 0;
+//         //loop unroll
+// #ifdef FEAT_31
+//         // if LEN_INPUT==31
+//         // for (k = 0; k < 30; k += 5) {
+//         //     mid_res_i[j] += (input_vec_i[k] == 0 || weight_i_0[k][j] == 0)? 0 : input_vec_i[k] * weight_i_0[k][j];
+//         //     mid_res_i[j] += (input_vec_i[k+1] == 0 || weight_i_0[k+1][j] == 0)? 0 : input_vec_i[k+1] * weight_i_0[k+1][j];
+//         //     mid_res_i[j] += (input_vec_i[k+2] == 0 || weight_i_0[k+2][j] == 0)? 0 : input_vec_i[k+2] * weight_i_0[k+2][j];
+//         //     mid_res_i[j] += (input_vec_i[k+3] == 0 || weight_i_0[k+3][j] == 0)? 0 : input_vec_i[k+3] * weight_i_0[k+3][j];
+//         //     mid_res_i[j] += (input_vec_i[k+4] == 0 || weight_i_0[k+4][j] == 0)? 0 : input_vec_i[k+4] * weight_i_0[k+4][j];
+//         // }
+//         // mid_res_i[j] += (input_vec_i[30] == 0 || weight_i_0[30][j] == 0)? 0 : input_vec_i[30] * weight_i_0[30][j];
+
+// 		// mid_res_i[j] += (input_vec_i[0] == 0 || weight_i_0[0][j] == 0)? 0 : input_vec_i[0] * weight_i_0[0][j];
+// 		// mid_res_i[j] += (input_vec_i[1] == 0 || weight_i_0[1][j] == 0)? 0 : input_vec_i[1] * weight_i_0[1][j];
+// 		// mid_res_i[j] += (input_vec_i[2] == 0 || weight_i_0[2][j] == 0)? 0 : input_vec_i[2] * weight_i_0[2][j];
+// 		// mid_res_i[j] += (input_vec_i[3] == 0 || weight_i_0[3][j] == 0)? 0 : input_vec_i[3] * weight_i_0[3][j];
+// 		// mid_res_i[j] += (input_vec_i[4] == 0 || weight_i_0[4][j] == 0)? 0 : input_vec_i[4] * weight_i_0[4][j];
+// 		// mid_res_i[j] += (input_vec_i[5] == 0 || weight_i_0[5][j] == 0)? 0 : input_vec_i[5] * weight_i_0[5][j];
+// 		// mid_res_i[j] += (input_vec_i[6] == 0 || weight_i_0[6][j] == 0)? 0 : input_vec_i[6] * weight_i_0[6][j];
+// 		// mid_res_i[j] += (input_vec_i[7] == 0 || weight_i_0[7][j] == 0)? 0 : input_vec_i[7] * weight_i_0[7][j];
+// 		// mid_res_i[j] += (input_vec_i[8] == 0 || weight_i_0[8][j] == 0)? 0 : input_vec_i[8] * weight_i_0[8][j];
+// 		// mid_res_i[j] += (input_vec_i[9] == 0 || weight_i_0[9][j] == 0)? 0 : input_vec_i[9] * weight_i_0[9][j];
+// 		// mid_res_i[j] += (input_vec_i[10] == 0 || weight_i_0[10][j] == 0)? 0 : input_vec_i[10] * weight_i_0[10][j];
+// 		// mid_res_i[j] += (input_vec_i[11] == 0 || weight_i_0[11][j] == 0)? 0 : input_vec_i[11] * weight_i_0[11][j];
+// 		// mid_res_i[j] += (input_vec_i[12] == 0 || weight_i_0[12][j] == 0)? 0 : input_vec_i[12] * weight_i_0[12][j];
+// 		// mid_res_i[j] += (input_vec_i[13] == 0 || weight_i_0[13][j] == 0)? 0 : input_vec_i[13] * weight_i_0[13][j];
+// 		// mid_res_i[j] += (input_vec_i[14] == 0 || weight_i_0[14][j] == 0)? 0 : input_vec_i[14] * weight_i_0[14][j];
+// 		// mid_res_i[j] += (input_vec_i[15] == 0 || weight_i_0[15][j] == 0)? 0 : input_vec_i[15] * weight_i_0[15][j];
+// 		// mid_res_i[j] += (input_vec_i[16] == 0 || weight_i_0[16][j] == 0)? 0 : input_vec_i[16] * weight_i_0[16][j];
+// 		// mid_res_i[j] += (input_vec_i[17] == 0 || weight_i_0[17][j] == 0)? 0 : input_vec_i[17] * weight_i_0[17][j];
+// 		// mid_res_i[j] += (input_vec_i[18] == 0 || weight_i_0[18][j] == 0)? 0 : input_vec_i[18] * weight_i_0[18][j];
+// 		// mid_res_i[j] += (input_vec_i[19] == 0 || weight_i_0[19][j] == 0)? 0 : input_vec_i[19] * weight_i_0[19][j];
+// 		// mid_res_i[j] += (input_vec_i[20] == 0 || weight_i_0[20][j] == 0)? 0 : input_vec_i[20] * weight_i_0[20][j];
+// 		// mid_res_i[j] += (input_vec_i[21] == 0 || weight_i_0[21][j] == 0)? 0 : input_vec_i[21] * weight_i_0[21][j];
+// 		// mid_res_i[j] += (input_vec_i[22] == 0 || weight_i_0[22][j] == 0)? 0 : input_vec_i[22] * weight_i_0[22][j];
+// 		// mid_res_i[j] += (input_vec_i[23] == 0 || weight_i_0[23][j] == 0)? 0 : input_vec_i[23] * weight_i_0[23][j];
+// 		// mid_res_i[j] += (input_vec_i[24] == 0 || weight_i_0[24][j] == 0)? 0 : input_vec_i[24] * weight_i_0[24][j];
+// 		// mid_res_i[j] += (input_vec_i[25] == 0 || weight_i_0[25][j] == 0)? 0 : input_vec_i[25] * weight_i_0[25][j];
+// 		// mid_res_i[j] += (input_vec_i[26] == 0 || weight_i_0[26][j] == 0)? 0 : input_vec_i[26] * weight_i_0[26][j];
+// 		// mid_res_i[j] += (input_vec_i[27] == 0 || weight_i_0[27][j] == 0)? 0 : input_vec_i[27] * weight_i_0[27][j];
+// 		// mid_res_i[j] += (input_vec_i[28] == 0 || weight_i_0[28][j] == 0)? 0 : input_vec_i[28] * weight_i_0[28][j];
+// 		// mid_res_i[j] += (input_vec_i[29] == 0 || weight_i_0[29][j] == 0)? 0 : input_vec_i[29] * weight_i_0[29][j];
+// 		// mid_res_i[j] += (input_vec_i[30] == 0 || weight_i_0[30][j] == 0)? 0 : input_vec_i[30] * weight_i_0[30][j];
+
+// 		// mid_res_i[j] += (input_vec_i[0] == 0 || weight_i_0_0[j] == 0)? 0 : input_vec_i[0] * weight_i_0_0[j];
+// 		// mid_res_i[j] += (input_vec_i[1] == 0 || weight_i_0_1[j] == 0)? 0 : input_vec_i[1] * weight_i_0_1[j];
+// 		// mid_res_i[j] += (input_vec_i[2] == 0 || weight_i_0_2[j] == 0)? 0 : input_vec_i[2] * weight_i_0_2[j];
+// 		// mid_res_i[j] += (input_vec_i[3] == 0 || weight_i_0_3[j] == 0)? 0 : input_vec_i[3] * weight_i_0_3[j];
+// 		// mid_res_i[j] += (input_vec_i[4] == 0 || weight_i_0_4[j] == 0)? 0 : input_vec_i[4] * weight_i_0_4[j];
+// 		// mid_res_i[j] += (input_vec_i[5] == 0 || weight_i_0_5[j] == 0)? 0 : input_vec_i[5] * weight_i_0_5[j];
+// 		// mid_res_i[j] += (input_vec_i[6] == 0 || weight_i_0_6[j] == 0)? 0 : input_vec_i[6] * weight_i_0_6[j];
+// 		// mid_res_i[j] += (input_vec_i[7] == 0 || weight_i_0_7[j] == 0)? 0 : input_vec_i[7] * weight_i_0_7[j];
+// 		// mid_res_i[j] += (input_vec_i[8] == 0 || weight_i_0_8[j] == 0)? 0 : input_vec_i[8] * weight_i_0_8[j];
+// 		// mid_res_i[j] += (input_vec_i[9] == 0 || weight_i_0_9[j] == 0)? 0 : input_vec_i[9] * weight_i_0_9[j];
+// 		// mid_res_i[j] += (input_vec_i[10] == 0 || weight_i_0_10[j] == 0)? 0 : input_vec_i[10] * weight_i_0_10[j];
+// 		// mid_res_i[j] += (input_vec_i[11] == 0 || weight_i_0_11[j] == 0)? 0 : input_vec_i[11] * weight_i_0_11[j];
+// 		// mid_res_i[j] += (input_vec_i[12] == 0 || weight_i_0_12[j] == 0)? 0 : input_vec_i[12] * weight_i_0_12[j];
+// 		// mid_res_i[j] += (input_vec_i[13] == 0 || weight_i_0_13[j] == 0)? 0 : input_vec_i[13] * weight_i_0_13[j];
+// 		// mid_res_i[j] += (input_vec_i[14] == 0 || weight_i_0_14[j] == 0)? 0 : input_vec_i[14] * weight_i_0_14[j];
+// 		// mid_res_i[j] += (input_vec_i[15] == 0 || weight_i_0_15[j] == 0)? 0 : input_vec_i[15] * weight_i_0_15[j];
+// 		// mid_res_i[j] += (input_vec_i[16] == 0 || weight_i_0_16[j] == 0)? 0 : input_vec_i[16] * weight_i_0_16[j];
+// 		// mid_res_i[j] += (input_vec_i[17] == 0 || weight_i_0_17[j] == 0)? 0 : input_vec_i[17] * weight_i_0_17[j];
+// 		// mid_res_i[j] += (input_vec_i[18] == 0 || weight_i_0_18[j] == 0)? 0 : input_vec_i[18] * weight_i_0_18[j];
+// 		// mid_res_i[j] += (input_vec_i[19] == 0 || weight_i_0_19[j] == 0)? 0 : input_vec_i[19] * weight_i_0_19[j];
+// 		// mid_res_i[j] += (input_vec_i[20] == 0 || weight_i_0_20[j] == 0)? 0 : input_vec_i[20] * weight_i_0_20[j];
+// 		// mid_res_i[j] += (input_vec_i[21] == 0 || weight_i_0_21[j] == 0)? 0 : input_vec_i[21] * weight_i_0_21[j];
+// 		// mid_res_i[j] += (input_vec_i[22] == 0 || weight_i_0_22[j] == 0)? 0 : input_vec_i[22] * weight_i_0_22[j];
+// 		// mid_res_i[j] += (input_vec_i[23] == 0 || weight_i_0_23[j] == 0)? 0 : input_vec_i[23] * weight_i_0_23[j];
+// 		// mid_res_i[j] += (input_vec_i[24] == 0 || weight_i_0_24[j] == 0)? 0 : input_vec_i[24] * weight_i_0_24[j];
+// 		// mid_res_i[j] += (input_vec_i[25] == 0 || weight_i_0_25[j] == 0)? 0 : input_vec_i[25] * weight_i_0_25[j];
+// 		// mid_res_i[j] += (input_vec_i[26] == 0 || weight_i_0_26[j] == 0)? 0 : input_vec_i[26] * weight_i_0_26[j];
+// 		// mid_res_i[j] += (input_vec_i[27] == 0 || weight_i_0_27[j] == 0)? 0 : input_vec_i[27] * weight_i_0_27[j];
+// 		// mid_res_i[j] += (input_vec_i[28] == 0 || weight_i_0_28[j] == 0)? 0 : input_vec_i[28] * weight_i_0_28[j];
+// 		// mid_res_i[j] += (input_vec_i[29] == 0 || weight_i_0_29[j] == 0)? 0 : input_vec_i[29] * weight_i_0_29[j];
+// 		// mid_res_i[j] += (input_vec_i[30] == 0 || weight_i_0_30[j] == 0)? 0 : input_vec_i[30] * weight_i_0_30[j];
+
+//         mid_res_i[j] += (input_vec_i[0] == 0 || weight_i_0_T[j][0] == 0)? 0 : input_vec_i[0] * weight_i_0_T[j][0];
+// 		mid_res_i[j] += (input_vec_i[1] == 0 || weight_i_0_T[j][1] == 0)? 0 : input_vec_i[1] * weight_i_0_T[j][1];
+// 		mid_res_i[j] += (input_vec_i[2] == 0 || weight_i_0_T[j][2] == 0)? 0 : input_vec_i[2] * weight_i_0_T[j][2];
+// 		mid_res_i[j] += (input_vec_i[3] == 0 || weight_i_0_T[j][3] == 0)? 0 : input_vec_i[3] * weight_i_0_T[j][3];
+// 		mid_res_i[j] += (input_vec_i[4] == 0 || weight_i_0_T[j][4] == 0)? 0 : input_vec_i[4] * weight_i_0_T[j][4];
+// 		mid_res_i[j] += (input_vec_i[5] == 0 || weight_i_0_T[j][5] == 0)? 0 : input_vec_i[5] * weight_i_0_T[j][5];
+// 		mid_res_i[j] += (input_vec_i[6] == 0 || weight_i_0_T[j][6] == 0)? 0 : input_vec_i[6] * weight_i_0_T[j][6];
+// 		mid_res_i[j] += (input_vec_i[7] == 0 || weight_i_0_T[j][7] == 0)? 0 : input_vec_i[7] * weight_i_0_T[j][7];
+// 		mid_res_i[j] += (input_vec_i[8] == 0 || weight_i_0_T[j][8] == 0)? 0 : input_vec_i[8] * weight_i_0_T[j][8];
+// 		mid_res_i[j] += (input_vec_i[9] == 0 || weight_i_0_T[j][9] == 0)? 0 : input_vec_i[9] * weight_i_0_T[j][9];
+// 		mid_res_i[j] += (input_vec_i[10] == 0 || weight_i_0_T[j][10] == 0)? 0 : input_vec_i[10] * weight_i_0_T[j][10];
+// 		mid_res_i[j] += (input_vec_i[11] == 0 || weight_i_0_T[j][11] == 0)? 0 : input_vec_i[11] * weight_i_0_T[j][11];
+// 		mid_res_i[j] += (input_vec_i[12] == 0 || weight_i_0_T[j][12] == 0)? 0 : input_vec_i[12] * weight_i_0_T[j][12];
+// 		mid_res_i[j] += (input_vec_i[13] == 0 || weight_i_0_T[j][13] == 0)? 0 : input_vec_i[13] * weight_i_0_T[j][13];
+// 		mid_res_i[j] += (input_vec_i[14] == 0 || weight_i_0_T[j][14] == 0)? 0 : input_vec_i[14] * weight_i_0_T[j][14];
+// 		mid_res_i[j] += (input_vec_i[15] == 0 || weight_i_0_T[j][15] == 0)? 0 : input_vec_i[15] * weight_i_0_T[j][15];
+// 		mid_res_i[j] += (input_vec_i[16] == 0 || weight_i_0_T[j][16] == 0)? 0 : input_vec_i[16] * weight_i_0_T[j][16];
+// 		mid_res_i[j] += (input_vec_i[17] == 0 || weight_i_0_T[j][17] == 0)? 0 : input_vec_i[17] * weight_i_0_T[j][17];
+// 		mid_res_i[j] += (input_vec_i[18] == 0 || weight_i_0_T[j][18] == 0)? 0 : input_vec_i[18] * weight_i_0_T[j][18];
+// 		mid_res_i[j] += (input_vec_i[19] == 0 || weight_i_0_T[j][19] == 0)? 0 : input_vec_i[19] * weight_i_0_T[j][19];
+// 		mid_res_i[j] += (input_vec_i[20] == 0 || weight_i_0_T[j][20] == 0)? 0 : input_vec_i[20] * weight_i_0_T[j][20];
+// 		mid_res_i[j] += (input_vec_i[21] == 0 || weight_i_0_T[j][21] == 0)? 0 : input_vec_i[21] * weight_i_0_T[j][21];
+// 		mid_res_i[j] += (input_vec_i[22] == 0 || weight_i_0_T[j][22] == 0)? 0 : input_vec_i[22] * weight_i_0_T[j][22];
+// 		mid_res_i[j] += (input_vec_i[23] == 0 || weight_i_0_T[j][23] == 0)? 0 : input_vec_i[23] * weight_i_0_T[j][23];
+// 		mid_res_i[j] += (input_vec_i[24] == 0 || weight_i_0_T[j][24] == 0)? 0 : input_vec_i[24] * weight_i_0_T[j][24];
+// 		mid_res_i[j] += (input_vec_i[25] == 0 || weight_i_0_T[j][25] == 0)? 0 : input_vec_i[25] * weight_i_0_T[j][25];
+// 		mid_res_i[j] += (input_vec_i[26] == 0 || weight_i_0_T[j][26] == 0)? 0 : input_vec_i[26] * weight_i_0_T[j][26];
+// 		mid_res_i[j] += (input_vec_i[27] == 0 || weight_i_0_T[j][27] == 0)? 0 : input_vec_i[27] * weight_i_0_T[j][27];
+// 		mid_res_i[j] += (input_vec_i[28] == 0 || weight_i_0_T[j][28] == 0)? 0 : input_vec_i[28] * weight_i_0_T[j][28];
+// 		mid_res_i[j] += (input_vec_i[29] == 0 || weight_i_0_T[j][29] == 0)? 0 : input_vec_i[29] * weight_i_0_T[j][29];
+// 		mid_res_i[j] += (input_vec_i[30] == 0 || weight_i_0_T[j][30] == 0)? 0 : input_vec_i[30] * weight_i_0_T[j][30];
+
+// #else
+//         // if k%4==0
+//         for (k = 0; k < LEN_INPUT; k += 4) {
+//             // mid_res_i[j] += input_vec_i[k] * weight_i_0[k][j];
+//             // mid_res_i[j] += input_vec_i[k+1] * weight_i_0[k+1][j];
+//             // mid_res_i[j] += input_vec_i[k+2] * weight_i_0[k+2][j];
+//             // mid_res_i[j] += input_vec_i[k+3] * weight_i_0[k+3][j];
+//             mid_res_i[j] += (input_vec_i[k] == 0 || weight_i_0[k][j] == 0)? 0 : input_vec_i[k] * weight_i_0[k][j];
+//             mid_res_i[j] += (input_vec_i[k+1] == 0 || weight_i_0[k+1][j] == 0)? 0 : input_vec_i[k+1] * weight_i_0[k+1][j];
+//             mid_res_i[j] += (input_vec_i[k+2] == 0 || weight_i_0[k+2][j] == 0)? 0 : input_vec_i[k+2] * weight_i_0[k+2][j];
+//             mid_res_i[j] += (input_vec_i[k+3] == 0 || weight_i_0[k+3][j] == 0)? 0 : input_vec_i[k+3] * weight_i_0[k+3][j];
+//         }
+// #endif
+//         // apply bias
+//         mid_res_i[j] += bias_i_0[j];
+//         // relu
+//         if (mid_res_i[j] < 0) {
+//             mid_res_i[j] = 0;
+//         }
+//     }
+//     for(j=0; j<LEN_LAYER_1; j++) {
+//         final_res_i[j] = 0;
+//         // final_res_i[1] = 0;
+//         for(k=0; k<LEN_LAYER_0; k += 8) {
+//             // final_res_i[j] += mid_res_i[k] * weight_i_1[k][j];
+//             final_res_i[j] += (mid_res_i[k] == 0 || weight_i_1[k][j] == 0)? 0 : mid_res_i[k] * weight_i_1[k][j];
+// 			final_res_i[j] += (mid_res_i[k+1] == 0 || weight_i_1[k+1][j] == 0)? 0 : mid_res_i[k+1] * weight_i_1[k+1][j];
+// 			final_res_i[j] += (mid_res_i[k+2] == 0 || weight_i_1[k+2][j] == 0)? 0 : mid_res_i[k+2] * weight_i_1[k+2][j];
+// 			final_res_i[j] += (mid_res_i[k+3] == 0 || weight_i_1[k+3][j] == 0)? 0 : mid_res_i[k+3] * weight_i_1[k+3][j];
+// 			final_res_i[j] += (mid_res_i[k+4] == 0 || weight_i_1[k+4][j] == 0)? 0 : mid_res_i[k+4] * weight_i_1[k+4][j];
+// 			final_res_i[j] += (mid_res_i[k+5] == 0 || weight_i_1[k+5][j] == 0)? 0 : mid_res_i[k+5] * weight_i_1[k+5][j];
+// 			final_res_i[j] += (mid_res_i[k+6] == 0 || weight_i_1[k+6][j] == 0)? 0 : mid_res_i[k+6] * weight_i_1[k+6][j];
+// 			final_res_i[j] += (mid_res_i[k+7] == 0 || weight_i_1[k+7][j] == 0)? 0 : mid_res_i[k+7] * weight_i_1[k+7][j];
+
+//    //          final_res_i[1] += (mid_res_i[k] == 0 || weight_i_1[k][1] == 0)? 0 : mid_res_i[k] * weight_i_1[k][1];
+// 			// final_res_i[1] += (mid_res_i[k+1] == 0 || weight_i_1[k+1][1] == 0)? 0 : mid_res_i[k+1] * weight_i_1[k+1][1];
+// 			// final_res_i[1] += (mid_res_i[k+2] == 0 || weight_i_1[k+2][1] == 0)? 0 : mid_res_i[k+2] * weight_i_1[k+2][1];
+// 			// final_res_i[1] += (mid_res_i[k+3] == 0 || weight_i_1[k+3][1] == 0)? 0 : mid_res_i[k+3] * weight_i_1[k+3][1];
+// 			// final_res_i[1] += (mid_res_i[k+4] == 0 || weight_i_1[k+4][1] == 0)? 0 : mid_res_i[k+4] * weight_i_1[k+4][1];
+// 			// final_res_i[1] += (mid_res_i[k+5] == 0 || weight_i_1[k+5][1] == 0)? 0 : mid_res_i[k+5] * weight_i_1[k+5][1];
+// 			// final_res_i[1] += (mid_res_i[k+6] == 0 || weight_i_1[k+6][1] == 0)? 0 : mid_res_i[k+6] * weight_i_1[k+6][1];
+// 			// final_res_i[1] += (mid_res_i[k+7] == 0 || weight_i_1[k+7][1] == 0)? 0 : mid_res_i[k+7] * weight_i_1[k+7][1];
+//         }
+//         // apply bias
+//         final_res_i[j] += bias_i_1[j];
+//         // final_res_i[1] += bias_i_1[1];
+//     }
+//     return final_res_i[0]>=(final_res_i[1]*100)? false: true;
+// }
+
+static bool prediction_model(char *feat_vec, struct request_queue *rq) {
+
+	long input_vec_i[LEN_INPUT], mid_res_i[LEN_LAYER_0], final_res_i[LEN_LAYER_1];
+	long *weight_0_T_ent, * bias_0_ent, *weight_1_T_ent, * bias_1_ent; 
+	int i, j, k, offset;
+
+	for (i=0 ; i<LEN_INPUT; i++) {
+		input_vec_i[i] = (long)(feat_vec[i]);
+		// input_vec_i[i] = (long)(test_input[index][i]);
+	}
+
+	weight_0_T_ent = rq->weight_0_T;
+	weight_1_T_ent = rq->weight_1_T;
+	bias_0_ent = rq->bias_0;
+	bias_1_ent = rq->bias_1;
+
+	for (j = 0, offset=0; j < LEN_LAYER_0; j++, offset+=LEN_INPUT) {
+        mid_res_i[j] = 0;
+        //loop unroll
+#ifdef FEAT_31
+
+		mid_res_i[j] += (input_vec_i[0] == 0 || weight_0_T_ent[offset+0] == 0)? 0 : input_vec_i[0] * weight_0_T_ent[offset+0];
+		mid_res_i[j] += (input_vec_i[1] == 0 || weight_0_T_ent[offset+1] == 0)? 0 : input_vec_i[1] * weight_0_T_ent[offset+1];
+		mid_res_i[j] += (input_vec_i[2] == 0 || weight_0_T_ent[offset+2] == 0)? 0 : input_vec_i[2] * weight_0_T_ent[offset+2];
+		mid_res_i[j] += (input_vec_i[3] == 0 || weight_0_T_ent[offset+3] == 0)? 0 : input_vec_i[3] * weight_0_T_ent[offset+3];
+		mid_res_i[j] += (input_vec_i[4] == 0 || weight_0_T_ent[offset+4] == 0)? 0 : input_vec_i[4] * weight_0_T_ent[offset+4];
+		mid_res_i[j] += (input_vec_i[5] == 0 || weight_0_T_ent[offset+5] == 0)? 0 : input_vec_i[5] * weight_0_T_ent[offset+5];
+		mid_res_i[j] += (input_vec_i[6] == 0 || weight_0_T_ent[offset+6] == 0)? 0 : input_vec_i[6] * weight_0_T_ent[offset+6];
+		mid_res_i[j] += (input_vec_i[7] == 0 || weight_0_T_ent[offset+7] == 0)? 0 : input_vec_i[7] * weight_0_T_ent[offset+7];
+		mid_res_i[j] += (input_vec_i[8] == 0 || weight_0_T_ent[offset+8] == 0)? 0 : input_vec_i[8] * weight_0_T_ent[offset+8];
+		mid_res_i[j] += (input_vec_i[9] == 0 || weight_0_T_ent[offset+9] == 0)? 0 : input_vec_i[9] * weight_0_T_ent[offset+9];
+		mid_res_i[j] += (input_vec_i[10] == 0 || weight_0_T_ent[offset+10] == 0)? 0 : input_vec_i[10] * weight_0_T_ent[offset+10];
+		mid_res_i[j] += (input_vec_i[11] == 0 || weight_0_T_ent[offset+11] == 0)? 0 : input_vec_i[11] * weight_0_T_ent[offset+11];
+		mid_res_i[j] += (input_vec_i[12] == 0 || weight_0_T_ent[offset+12] == 0)? 0 : input_vec_i[12] * weight_0_T_ent[offset+12];
+		mid_res_i[j] += (input_vec_i[13] == 0 || weight_0_T_ent[offset+13] == 0)? 0 : input_vec_i[13] * weight_0_T_ent[offset+13];
+		mid_res_i[j] += (input_vec_i[14] == 0 || weight_0_T_ent[offset+14] == 0)? 0 : input_vec_i[14] * weight_0_T_ent[offset+14];
+		mid_res_i[j] += (input_vec_i[15] == 0 || weight_0_T_ent[offset+15] == 0)? 0 : input_vec_i[15] * weight_0_T_ent[offset+15];
+		mid_res_i[j] += (input_vec_i[16] == 0 || weight_0_T_ent[offset+16] == 0)? 0 : input_vec_i[16] * weight_0_T_ent[offset+16];
+		mid_res_i[j] += (input_vec_i[17] == 0 || weight_0_T_ent[offset+17] == 0)? 0 : input_vec_i[17] * weight_0_T_ent[offset+17];
+		mid_res_i[j] += (input_vec_i[18] == 0 || weight_0_T_ent[offset+18] == 0)? 0 : input_vec_i[18] * weight_0_T_ent[offset+18];
+		mid_res_i[j] += (input_vec_i[19] == 0 || weight_0_T_ent[offset+19] == 0)? 0 : input_vec_i[19] * weight_0_T_ent[offset+19];
+		mid_res_i[j] += (input_vec_i[20] == 0 || weight_0_T_ent[offset+20] == 0)? 0 : input_vec_i[20] * weight_0_T_ent[offset+20];
+		mid_res_i[j] += (input_vec_i[21] == 0 || weight_0_T_ent[offset+21] == 0)? 0 : input_vec_i[21] * weight_0_T_ent[offset+21];
+		mid_res_i[j] += (input_vec_i[22] == 0 || weight_0_T_ent[offset+22] == 0)? 0 : input_vec_i[22] * weight_0_T_ent[offset+22];
+		mid_res_i[j] += (input_vec_i[23] == 0 || weight_0_T_ent[offset+23] == 0)? 0 : input_vec_i[23] * weight_0_T_ent[offset+23];
+		mid_res_i[j] += (input_vec_i[24] == 0 || weight_0_T_ent[offset+24] == 0)? 0 : input_vec_i[24] * weight_0_T_ent[offset+24];
+		mid_res_i[j] += (input_vec_i[25] == 0 || weight_0_T_ent[offset+25] == 0)? 0 : input_vec_i[25] * weight_0_T_ent[offset+25];
+		mid_res_i[j] += (input_vec_i[26] == 0 || weight_0_T_ent[offset+26] == 0)? 0 : input_vec_i[26] * weight_0_T_ent[offset+26];
+		mid_res_i[j] += (input_vec_i[27] == 0 || weight_0_T_ent[offset+27] == 0)? 0 : input_vec_i[27] * weight_0_T_ent[offset+27];
+		mid_res_i[j] += (input_vec_i[28] == 0 || weight_0_T_ent[offset+28] == 0)? 0 : input_vec_i[28] * weight_0_T_ent[offset+28];
+		mid_res_i[j] += (input_vec_i[29] == 0 || weight_0_T_ent[offset+29] == 0)? 0 : input_vec_i[29] * weight_0_T_ent[offset+29];
+		mid_res_i[j] += (input_vec_i[30] == 0 || weight_0_T_ent[offset+30] == 0)? 0 : input_vec_i[30] * weight_0_T_ent[offset+30];
+
+#else
+        // if k%4==0
+        for (k = 0; k < LEN_INPUT; k += 4) {
+            // mid_res_i[j] += input_vec_i[k] * weight_i_0[k][j];
+            // mid_res_i[j] += input_vec_i[k+1] * weight_i_0[k+1][j];
+            // mid_res_i[j] += input_vec_i[k+2] * weight_i_0[k+2][j];
+            // mid_res_i[j] += input_vec_i[k+3] * weight_i_0[k+3][j];
+            mid_res_i[j] += (input_vec_i[k] == 0 || weight_i_0[k][j] == 0)? 0 : input_vec_i[k] * weight_i_0[k][j];
+            mid_res_i[j] += (input_vec_i[k+1] == 0 || weight_i_0[k+1][j] == 0)? 0 : input_vec_i[k+1] * weight_i_0[k+1][j];
+            mid_res_i[j] += (input_vec_i[k+2] == 0 || weight_i_0[k+2][j] == 0)? 0 : input_vec_i[k+2] * weight_i_0[k+2][j];
+            mid_res_i[j] += (input_vec_i[k+3] == 0 || weight_i_0[k+3][j] == 0)? 0 : input_vec_i[k+3] * weight_i_0[k+3][j];
+        }
+#endif
+        // apply bias
+        mid_res_i[j] += bias_0_ent[j];
+        // relu
+        if (mid_res_i[j] < 0) {
+            mid_res_i[j] = 0;
+        }
+    }
+    
+    final_res_i[0] = 0;
+    for(k=0; k<LEN_LAYER_0; k += 8) {
+        final_res_i[0] += (mid_res_i[k] == 0 || weight_1_T_ent[k] == 0)? 0 : mid_res_i[k] * weight_1_T_ent[k];
+		final_res_i[0] += (mid_res_i[k+1] == 0 || weight_1_T_ent[k+1] == 0)? 0 : mid_res_i[k+1] * weight_1_T_ent[k+1];
+		final_res_i[0] += (mid_res_i[k+2] == 0 || weight_1_T_ent[k+2] == 0)? 0 : mid_res_i[k+2] * weight_1_T_ent[k+2];
+		final_res_i[0] += (mid_res_i[k+3] == 0 || weight_1_T_ent[k+3] == 0)? 0 : mid_res_i[k+3] * weight_1_T_ent[k+3];
+		final_res_i[0] += (mid_res_i[k+4] == 0 || weight_1_T_ent[k+4] == 0)? 0 : mid_res_i[k+4] * weight_1_T_ent[k+4];
+		final_res_i[0] += (mid_res_i[k+5] == 0 || weight_1_T_ent[k+5] == 0)? 0 : mid_res_i[k+5] * weight_1_T_ent[k+5];
+		final_res_i[0] += (mid_res_i[k+6] == 0 || weight_1_T_ent[k+6] == 0)? 0 : mid_res_i[k+6] * weight_1_T_ent[k+6];
+		final_res_i[0] += (mid_res_i[k+7] == 0 || weight_1_T_ent[k+7] == 0)? 0 : mid_res_i[k+7] * weight_1_T_ent[k+7];
+	}
+	// apply bias
+	final_res_i[0] += bias_1_ent[0];
+
+	final_res_i[1] = 0;
+    for(k=0; k<LEN_LAYER_0; k += 8) {
+        final_res_i[1] += (mid_res_i[k] == 0 || weight_1_T_ent[k+256] == 0)? 0 : mid_res_i[k] * weight_1_T_ent[k+256];
+		final_res_i[1] += (mid_res_i[k+1] == 0 || weight_1_T_ent[k+257] == 0)? 0 : mid_res_i[k+1] * weight_1_T_ent[k+257];
+		final_res_i[1] += (mid_res_i[k+2] == 0 || weight_1_T_ent[k+258] == 0)? 0 : mid_res_i[k+2] * weight_1_T_ent[k+258];
+		final_res_i[1] += (mid_res_i[k+3] == 0 || weight_1_T_ent[k+259] == 0)? 0 : mid_res_i[k+3] * weight_1_T_ent[k+259];
+		final_res_i[1] += (mid_res_i[k+4] == 0 || weight_1_T_ent[k+260] == 0)? 0 : mid_res_i[k+4] * weight_1_T_ent[k+260];
+		final_res_i[1] += (mid_res_i[k+5] == 0 || weight_1_T_ent[k+261] == 0)? 0 : mid_res_i[k+5] * weight_1_T_ent[k+261];
+		final_res_i[1] += (mid_res_i[k+6] == 0 || weight_1_T_ent[k+262] == 0)? 0 : mid_res_i[k+6] * weight_1_T_ent[k+262];
+		final_res_i[1] += (mid_res_i[k+7] == 0 || weight_1_T_ent[k+263] == 0)? 0 : mid_res_i[k+7] * weight_1_T_ent[k+263];
+	}
+	// apply bias
+	final_res_i[1] += bias_1_ent[1];
+
+    return final_res_i[0]>=(final_res_i[1])? false: true;
+}
+
+// long input_vec_off[LEN_INPUT], mid_res_off[LEN_LAYER_0];
+// bool offloader_start, offloader_end;
+// unsigned long offloader_flags;
+// EXPORT_SYMBOL(input_vec_off);
+// EXPORT_SYMBOL(mid_res_off);
+// EXPORT_SYMBOL(offloader_start);
+// EXPORT_SYMBOL(offloader_end);
+// EXPORT_SYMBOL(offloader_flags);
+// EXPORT_SYMBOL(weight_i_0);
+// EXPORT_SYMBOL(weight_i_0_T);
+// EXPORT_SYMBOL(bias_i_0);
+
+// static struct task_struct *offloader_thread;
+// static unsigned long offloader_flags;
+// static long input_vec_off[LEN_INPUT], mid_res_off[LEN_LAYER_0];
+// static bool offloader_start, offloader_end, offloader_terminate;
+
+// static int offloader_func(void *arg) {
+
+// 	int j, k;
+
+// 	while (1) {
+
+//         while (!offloader_start) {
+//         	///*ndelay(1000);*/cpu_relax();
+//         	printk(KERN_ERR "Waiting for the start signal\n");
+//         	mdelay(1000);
+//         }
+//         offloader_start = false;
+//         if (offloader_terminate) {
+//             break;
+//             // return 0;
+//         }
+
+//         for (j = LEN_LAYER_0/2; j < LEN_LAYER_0; j++) {
+//             mid_res_off[j] = 0;
+//             //loop unroll
+//             for (k = 0; k < LEN_INPUT; k += 4) {
+//                 // mid_res_off[j] += input_vec_off[k] * weight_i_0[k][j];
+//                 // mid_res_off[j] += input_vec_off[k+1] * weight_i_0[k+1][j];
+//                 // mid_res_off[j] += input_vec_off[k+2] * weight_i_0[k+2][j];
+//                 // mid_res_off[j] += input_vec_off[k+3] * weight_i_0[k+3][j];
+//                 mid_res_off[j] += (input_vec_off[k] == 0 || weight_i_0[k][j] == 0)? 0 : input_vec_off[k] * weight_i_0[k][j];
+//                 mid_res_off[j] += (input_vec_off[k+1] == 0 || weight_i_0[k+1][j] == 0)? 0 : input_vec_off[k+1] * weight_i_0[k+1][j];
+//                 mid_res_off[j] += (input_vec_off[k+2] == 0 || weight_i_0[k+2][j] == 0)? 0 : input_vec_off[k+2] * weight_i_0[k+2][j];
+//                 mid_res_off[j] += (input_vec_off[k+3] == 0 || weight_i_0[k+3][j] == 0)? 0 : input_vec_off[k+3] * weight_i_0[k+3][j];
+//             }
+//             // apply bias
+//             mid_res_off[j] += bias_i_0[j];
+//             // relu
+//             if (mid_res_off[j] < 0) {
+//                 mid_res_off[j] = 0;
+//             }
+//         }
+
+//         offloader_end = true;
+//     }
+
+// 	return 0;
+// }
+
+// static bool prediction_model_off(char *feat_vec) {
+
+// 	long final_res_i[LEN_LAYER_1];
+// 	int i, j, k;
+
+// 	for (i=0 ; i<LEN_INPUT; i++) {
+// 		input_vec_off[i] = (long)(feat_vec[i]);
+// 	}
+
+// 	offloader_start = true;
+
+// 	for (j = 0; j < LEN_LAYER_0_HALF; j++) {
+//         mid_res_off[j] = 0;
+//         //loop unroll
+// #ifdef FEAT_31
+//         // for (k = 0; k < 30; k += 5) {
+//         //     mid_res_off[j] += (input_vec_off[k] == 0 || weight_i_0[k][j] == 0)? 0 : input_vec_off[k] * weight_i_0[k][j];
+//         //     mid_res_off[j] += (input_vec_off[k+1] == 0 || weight_i_0[k+1][j] == 0)? 0 : input_vec_off[k+1] * weight_i_0[k+1][j];
+//         //     mid_res_off[j] += (input_vec_off[k+2] == 0 || weight_i_0[k+2][j] == 0)? 0 : input_vec_off[k+2] * weight_i_0[k+2][j];
+//         //     mid_res_off[j] += (input_vec_off[k+3] == 0 || weight_i_0[k+3][j] == 0)? 0 : input_vec_off[k+3] * weight_i_0[k+3][j];
+//         //     mid_res_off[j] += (input_vec_off[k+4] == 0 || weight_i_0[k+4][j] == 0)? 0 : input_vec_off[k+4] * weight_i_0[k+4][j];
+//         // }
+//         // mid_res_off[j] += (input_vec_off[30] == 0 || weight_i_0[30][j] == 0)? 0 : input_vec_off[30] * weight_i_0[30][j];
+//   //       mid_res_off[j] += (input_vec_off[0] == 0 || weight_i_0[0][j] == 0)? 0 : input_vec_off[0] * weight_i_0[0][j];
+// 		// mid_res_off[j] += (input_vec_off[1] == 0 || weight_i_0[1][j] == 0)? 0 : input_vec_off[1] * weight_i_0[1][j];
+// 		// mid_res_off[j] += (input_vec_off[2] == 0 || weight_i_0[2][j] == 0)? 0 : input_vec_off[2] * weight_i_0[2][j];
+// 		// mid_res_off[j] += (input_vec_off[3] == 0 || weight_i_0[3][j] == 0)? 0 : input_vec_off[3] * weight_i_0[3][j];
+// 		// mid_res_off[j] += (input_vec_off[4] == 0 || weight_i_0[4][j] == 0)? 0 : input_vec_off[4] * weight_i_0[4][j];
+// 		// mid_res_off[j] += (input_vec_off[5] == 0 || weight_i_0[5][j] == 0)? 0 : input_vec_off[5] * weight_i_0[5][j];
+// 		// mid_res_off[j] += (input_vec_off[6] == 0 || weight_i_0[6][j] == 0)? 0 : input_vec_off[6] * weight_i_0[6][j];
+// 		// mid_res_off[j] += (input_vec_off[7] == 0 || weight_i_0[7][j] == 0)? 0 : input_vec_off[7] * weight_i_0[7][j];
+// 		// mid_res_off[j] += (input_vec_off[8] == 0 || weight_i_0[8][j] == 0)? 0 : input_vec_off[8] * weight_i_0[8][j];
+// 		// mid_res_off[j] += (input_vec_off[9] == 0 || weight_i_0[9][j] == 0)? 0 : input_vec_off[9] * weight_i_0[9][j];
+// 		// mid_res_off[j] += (input_vec_off[10] == 0 || weight_i_0[10][j] == 0)? 0 : input_vec_off[10] * weight_i_0[10][j];
+// 		// mid_res_off[j] += (input_vec_off[11] == 0 || weight_i_0[11][j] == 0)? 0 : input_vec_off[11] * weight_i_0[11][j];
+// 		// mid_res_off[j] += (input_vec_off[12] == 0 || weight_i_0[12][j] == 0)? 0 : input_vec_off[12] * weight_i_0[12][j];
+// 		// mid_res_off[j] += (input_vec_off[13] == 0 || weight_i_0[13][j] == 0)? 0 : input_vec_off[13] * weight_i_0[13][j];
+// 		// mid_res_off[j] += (input_vec_off[14] == 0 || weight_i_0[14][j] == 0)? 0 : input_vec_off[14] * weight_i_0[14][j];
+// 		// mid_res_off[j] += (input_vec_off[15] == 0 || weight_i_0[15][j] == 0)? 0 : input_vec_off[15] * weight_i_0[15][j];
+// 		// mid_res_off[j] += (input_vec_off[16] == 0 || weight_i_0[16][j] == 0)? 0 : input_vec_off[16] * weight_i_0[16][j];
+// 		// mid_res_off[j] += (input_vec_off[17] == 0 || weight_i_0[17][j] == 0)? 0 : input_vec_off[17] * weight_i_0[17][j];
+// 		// mid_res_off[j] += (input_vec_off[18] == 0 || weight_i_0[18][j] == 0)? 0 : input_vec_off[18] * weight_i_0[18][j];
+// 		// mid_res_off[j] += (input_vec_off[19] == 0 || weight_i_0[19][j] == 0)? 0 : input_vec_off[19] * weight_i_0[19][j];
+// 		// mid_res_off[j] += (input_vec_off[20] == 0 || weight_i_0[20][j] == 0)? 0 : input_vec_off[20] * weight_i_0[20][j];
+// 		// mid_res_off[j] += (input_vec_off[21] == 0 || weight_i_0[21][j] == 0)? 0 : input_vec_off[21] * weight_i_0[21][j];
+// 		// mid_res_off[j] += (input_vec_off[22] == 0 || weight_i_0[22][j] == 0)? 0 : input_vec_off[22] * weight_i_0[22][j];
+// 		// mid_res_off[j] += (input_vec_off[23] == 0 || weight_i_0[23][j] == 0)? 0 : input_vec_off[23] * weight_i_0[23][j];
+// 		// mid_res_off[j] += (input_vec_off[24] == 0 || weight_i_0[24][j] == 0)? 0 : input_vec_off[24] * weight_i_0[24][j];
+// 		// mid_res_off[j] += (input_vec_off[25] == 0 || weight_i_0[25][j] == 0)? 0 : input_vec_off[25] * weight_i_0[25][j];
+// 		// mid_res_off[j] += (input_vec_off[26] == 0 || weight_i_0[26][j] == 0)? 0 : input_vec_off[26] * weight_i_0[26][j];
+// 		// mid_res_off[j] += (input_vec_off[27] == 0 || weight_i_0[27][j] == 0)? 0 : input_vec_off[27] * weight_i_0[27][j];
+// 		// mid_res_off[j] += (input_vec_off[28] == 0 || weight_i_0[28][j] == 0)? 0 : input_vec_off[28] * weight_i_0[28][j];
+// 		// mid_res_off[j] += (input_vec_off[29] == 0 || weight_i_0[29][j] == 0)? 0 : input_vec_off[29] * weight_i_0[29][j];
+// 		// mid_res_off[j] += (input_vec_off[30] == 0 || weight_i_0[30][j] == 0)? 0 : input_vec_off[30] * weight_i_0[30][j];
+
+// 		mid_res_off[j] += (input_vec_off[0] == 0 || weight_i_0_T[j][0] == 0)? 0 : input_vec_off[0] * weight_i_0_T[j][0];
+// 		mid_res_off[j] += (input_vec_off[1] == 0 || weight_i_0_T[j][1] == 0)? 0 : input_vec_off[1] * weight_i_0_T[j][1];
+// 		mid_res_off[j] += (input_vec_off[2] == 0 || weight_i_0_T[j][2] == 0)? 0 : input_vec_off[2] * weight_i_0_T[j][2];
+// 		mid_res_off[j] += (input_vec_off[3] == 0 || weight_i_0_T[j][3] == 0)? 0 : input_vec_off[3] * weight_i_0_T[j][3];
+// 		mid_res_off[j] += (input_vec_off[4] == 0 || weight_i_0_T[j][4] == 0)? 0 : input_vec_off[4] * weight_i_0_T[j][4];
+// 		mid_res_off[j] += (input_vec_off[5] == 0 || weight_i_0_T[j][5] == 0)? 0 : input_vec_off[5] * weight_i_0_T[j][5];
+// 		mid_res_off[j] += (input_vec_off[6] == 0 || weight_i_0_T[j][6] == 0)? 0 : input_vec_off[6] * weight_i_0_T[j][6];
+// 		mid_res_off[j] += (input_vec_off[7] == 0 || weight_i_0_T[j][7] == 0)? 0 : input_vec_off[7] * weight_i_0_T[j][7];
+// 		mid_res_off[j] += (input_vec_off[8] == 0 || weight_i_0_T[j][8] == 0)? 0 : input_vec_off[8] * weight_i_0_T[j][8];
+// 		mid_res_off[j] += (input_vec_off[9] == 0 || weight_i_0_T[j][9] == 0)? 0 : input_vec_off[9] * weight_i_0_T[j][9];
+// 		mid_res_off[j] += (input_vec_off[10] == 0 || weight_i_0_T[j][10] == 0)? 0 : input_vec_off[10] * weight_i_0_T[j][10];
+// 		mid_res_off[j] += (input_vec_off[11] == 0 || weight_i_0_T[j][11] == 0)? 0 : input_vec_off[11] * weight_i_0_T[j][11];
+// 		mid_res_off[j] += (input_vec_off[12] == 0 || weight_i_0_T[j][12] == 0)? 0 : input_vec_off[12] * weight_i_0_T[j][12];
+// 		mid_res_off[j] += (input_vec_off[13] == 0 || weight_i_0_T[j][13] == 0)? 0 : input_vec_off[13] * weight_i_0_T[j][13];
+// 		mid_res_off[j] += (input_vec_off[14] == 0 || weight_i_0_T[j][14] == 0)? 0 : input_vec_off[14] * weight_i_0_T[j][14];
+// 		mid_res_off[j] += (input_vec_off[15] == 0 || weight_i_0_T[j][15] == 0)? 0 : input_vec_off[15] * weight_i_0_T[j][15];
+// 		mid_res_off[j] += (input_vec_off[16] == 0 || weight_i_0_T[j][16] == 0)? 0 : input_vec_off[16] * weight_i_0_T[j][16];
+// 		mid_res_off[j] += (input_vec_off[17] == 0 || weight_i_0_T[j][17] == 0)? 0 : input_vec_off[17] * weight_i_0_T[j][17];
+// 		mid_res_off[j] += (input_vec_off[18] == 0 || weight_i_0_T[j][18] == 0)? 0 : input_vec_off[18] * weight_i_0_T[j][18];
+// 		mid_res_off[j] += (input_vec_off[19] == 0 || weight_i_0_T[j][19] == 0)? 0 : input_vec_off[19] * weight_i_0_T[j][19];
+// 		mid_res_off[j] += (input_vec_off[20] == 0 || weight_i_0_T[j][20] == 0)? 0 : input_vec_off[20] * weight_i_0_T[j][20];
+// 		mid_res_off[j] += (input_vec_off[21] == 0 || weight_i_0_T[j][21] == 0)? 0 : input_vec_off[21] * weight_i_0_T[j][21];
+// 		mid_res_off[j] += (input_vec_off[22] == 0 || weight_i_0_T[j][22] == 0)? 0 : input_vec_off[22] * weight_i_0_T[j][22];
+// 		mid_res_off[j] += (input_vec_off[23] == 0 || weight_i_0_T[j][23] == 0)? 0 : input_vec_off[23] * weight_i_0_T[j][23];
+// 		mid_res_off[j] += (input_vec_off[24] == 0 || weight_i_0_T[j][24] == 0)? 0 : input_vec_off[24] * weight_i_0_T[j][24];
+// 		mid_res_off[j] += (input_vec_off[25] == 0 || weight_i_0_T[j][25] == 0)? 0 : input_vec_off[25] * weight_i_0_T[j][25];
+// 		mid_res_off[j] += (input_vec_off[26] == 0 || weight_i_0_T[j][26] == 0)? 0 : input_vec_off[26] * weight_i_0_T[j][26];
+// 		mid_res_off[j] += (input_vec_off[27] == 0 || weight_i_0_T[j][27] == 0)? 0 : input_vec_off[27] * weight_i_0_T[j][27];
+// 		mid_res_off[j] += (input_vec_off[28] == 0 || weight_i_0_T[j][28] == 0)? 0 : input_vec_off[28] * weight_i_0_T[j][28];
+// 		mid_res_off[j] += (input_vec_off[29] == 0 || weight_i_0_T[j][29] == 0)? 0 : input_vec_off[29] * weight_i_0_T[j][29];
+// 		mid_res_off[j] += (input_vec_off[30] == 0 || weight_i_0_T[j][30] == 0)? 0 : input_vec_off[30] * weight_i_0_T[j][30];
+
+// #else
+//         for (k = 0; k < LEN_INPUT; k += 4) {
+//             // mid_res_off[j] += input_vec_off[k] * weight_i_0[k][j];
+//             // mid_res_off[j] += input_vec_off[k+1] * weight_i_0[k+1][j];
+//             // mid_res_off[j] += input_vec_off[k+2] * weight_i_0[k+2][j];
+//             // mid_res_off[j] += input_vec_off[k+3] * weight_i_0[k+3][j];
+//             mid_res_off[j] += (input_vec_off[k] == 0 || weight_i_0[k][j] == 0)? 0 : input_vec_off[k] * weight_i_0[k][j];
+//             mid_res_off[j] += (input_vec_off[k+1] == 0 || weight_i_0[k+1][j] == 0)? 0 : input_vec_off[k+1] * weight_i_0[k+1][j];
+//             mid_res_off[j] += (input_vec_off[k+2] == 0 || weight_i_0[k+2][j] == 0)? 0 : input_vec_off[k+2] * weight_i_0[k+2][j];
+//             mid_res_off[j] += (input_vec_off[k+3] == 0 || weight_i_0[k+3][j] == 0)? 0 : input_vec_off[k+3] * weight_i_0[k+3][j];
+//         }
+// #endif
+//         // apply bias
+//         mid_res_off[j] += bias_i_0[j];
+//         // relu
+//         if (mid_res_off[j] < 0) {
+//             mid_res_off[j] = 0;
+//         }
+//     }
+
+//     while (!offloader_end) {ndelay(1);/*cpu_relax();*/}
+// 	offloader_end = false;
+
+// 	for(j=0; j<LEN_LAYER_1; j++) {
+//         final_res_i[j] = 0;
+//         for(k=0; k<LEN_LAYER_0; k+=8) {
+//             // final_res_i[j] += mid_res_off[k] * weight_i_1[k][j];
+//             final_res_i[j] += (mid_res_off[k] == 0 || weight_i_1[k][j] == 0)? 0 : mid_res_off[k] * weight_i_1[k][j];
+// 			final_res_i[j] += (mid_res_off[k+1] == 0 || weight_i_1[k+1][j] == 0)? 0 : mid_res_off[k+1] * weight_i_1[k+1][j];
+// 			final_res_i[j] += (mid_res_off[k+2] == 0 || weight_i_1[k+2][j] == 0)? 0 : mid_res_off[k+2] * weight_i_1[k+2][j];
+// 			final_res_i[j] += (mid_res_off[k+3] == 0 || weight_i_1[k+3][j] == 0)? 0 : mid_res_off[k+3] * weight_i_1[k+3][j];
+// 			final_res_i[j] += (mid_res_off[k+4] == 0 || weight_i_1[k+4][j] == 0)? 0 : mid_res_off[k+4] * weight_i_1[k+4][j];
+// 			final_res_i[j] += (mid_res_off[k+5] == 0 || weight_i_1[k+5][j] == 0)? 0 : mid_res_off[k+5] * weight_i_1[k+5][j];
+// 			final_res_i[j] += (mid_res_off[k+6] == 0 || weight_i_1[k+6][j] == 0)? 0 : mid_res_off[k+6] * weight_i_1[k+6][j];
+// 			final_res_i[j] += (mid_res_off[k+7] == 0 || weight_i_1[k+7][j] == 0)? 0 : mid_res_off[k+7] * weight_i_1[k+7][j];
+//         }
+//         // apply bias
+//         final_res_i[j] += bias_i_1[j];
+//     }
+//     return final_res_i[0]>=(final_res_i[1]*100)? false: true;
+// }
+
+#define TARGET_PRIO 16388
+
+
+#endif
+
 /*
  * Check write append to a zoned block device.
  */
@@ -615,7 +1168,7 @@ static void __submit_bio(struct bio *bio)
  *    again.
  *
  * bio_list_on_stack[0] contains bios submitted by the current ->submit_bio.
- * bio_list_on_stack[1] contains bios that were submitted before the current
+ * bio_list_on_stack[1] contains bios that were submitted befo	re the current
  *	->submit_bio, but that haven't been processed yet.
  */
 static void __submit_bio_noacct(struct bio *bio)
@@ -626,6 +1179,10 @@ static void __submit_bio_noacct(struct bio *bio)
 
 	bio_list_init(&bio_list_on_stack[0]);
 	current->bio_list = bio_list_on_stack;
+
+#ifdef LAKE_LINNOS
+	bio->bi_first = current->bio_list?false:true;
+#endif
 
 	do {
 		struct request_queue *q = bdev_get_queue(bio->bi_bdev);
@@ -708,6 +1265,146 @@ void submit_bio_noacct(struct bio *bio)
 	struct blk_plug *plug;
 
 	might_sleep();
+
+#ifdef LAKE_LINNOS
+	getnstimeofday(&(bio->bi_ts_start));
+	/* Nan: for debugging */
+	{
+
+	// getnstimeofday(&ts_start);
+	if (q->ml_enabled && bio->bi_first) {
+		
+		unsigned int __op = bio_op(bio);
+		sector_t __sec_off = ((bio)->bi_iter).bi_sector;
+		unsigned int __secs = bio_sectors(bio);
+
+		// getnstimeofday(&ts_end);
+		/* LinnOS debug */
+		// printk(KERN_ERR "*** generic_make_request_checks ***: %s bio->bi_end_io = %p\n"
+		// 	, bio->bi_disk->disk_name, bio->bi_end_io);
+		/* end */
+
+		/* assignments for later use in bio_endio */
+		bio->bi_ebusy = false;
+		bio->bi_sec_off = __sec_off;
+		bio->bi_sec_size = __secs;
+		bio->bi_op_type = __op;
+
+		/* record number of 4k IOs nr_io_4k in request_queue */
+		/* snapshot the current nr_io_4k and store it in the request's bio */
+		// q->nr_io_fourk += (long)((__secs + 7) / 8);
+		his_queue_io4k_add_ss(__op, (long)((__secs + 7) / 8), q, bio);
+		// printk(KERN_ERR
+		// 	"*** generic_make_request_checks ***: [%p] %s EN-request_queue (%u, %d, %llu); read %u; write %u\n", bio
+		// 	, bio->bi_disk->disk_name, bio->bi_op_type, bio->bi_sec_size, bio->bi_sec_off, q->nr_io_4k[0], q->nr_io_4k[1]);
+		// printk(KERN_ERR "Here comes a %d\n", __op);
+
+		if (__op == 0 && TARGET_PRIO != bio_prio(bio)) {
+
+			// bool ebusy;
+			char feature_vec[(LEN_PAD_PENDING+LEN_PAD_LATENCY)*HIS_IO_QSIZE+LEN_PAD_PENDING+1];
+			unsigned int len_vec = (LEN_PAD_PENDING+LEN_PAD_LATENCY)*HIS_IO_QSIZE+LEN_PAD_PENDING;
+			unsigned int loc_lat = LEN_PAD_PENDING*(HIS_IO_QSIZE+1);
+			unsigned int __index, i, r_pending, w_pending;
+			// struct timespec ts_start, ts_end;
+
+			// getnstimeofday(&ts_start);
+			spin_lock_irq(&(q->his_lock));
+			/* feature vector generation */
+			__index = q->his_q_index[0];
+			for (i=0; i<HIS_IO_QSIZE; i++) {
+				memcpy((void*)(&(feature_vec[i*LEN_PAD_PENDING])),
+					(void*)(q->his_io_queue[0][(__index+i)%HIS_IO_QSIZE].pad_pending), LEN_PAD_PENDING);
+				memcpy((void*)(&(feature_vec[loc_lat+i*LEN_PAD_LATENCY])),
+					(void*)(q->his_io_queue[0][(__index+i)%HIS_IO_QSIZE].pad_latency), LEN_PAD_LATENCY);
+			}
+			// memcpy((void*)(&(feature_vec[HIS_IO_QSIZE*LEN_PAD_PENDING])),
+			// 	);
+			r_pending = q->nr_io_4k[0];
+			w_pending = q->nr_io_4k[1];
+#ifdef DIS_RW
+			if (r_pending > MAX_PENDING) {
+				r_pending = MAX_PENDING;
+			}
+			if (w_pending > MAX_PENDING) {
+				w_pending = MAX_PENDING;
+			}
+			r_pending = r_pending*(MAX_PENDING+1) + w_pending;
+#else
+			r_pending += w_pending;
+			if (r_pending > MAX_PENDING) {
+				r_pending = MAX_PENDING;
+			}
+#endif
+			his_queue_padding(&(feature_vec[HIS_IO_QSIZE*LEN_PAD_PENDING]), r_pending, LEN_PAD_PENDING);
+			feature_vec[len_vec] = '\0';
+
+			spin_unlock_irq(&(q->his_lock));
+			// getnstimeofday(&ts_end);
+			// printk(KERN_ERR
+			// 	"*** Nan ***: Feature vec generation overhead: %ld\n"
+			// 	, my_get_duration_ns(ts_start, ts_end));
+
+			// if (test_and_set_bit(0, &offloader_flags)==0) {
+			// 	// bio->bi_ebusy = prediction_model_off((char *)feature_vec);
+			// 	bio->bi_ebusy = prediction_model((char *)feature_vec, 0);
+			// 	test_and_clear_bit(0, &offloader_flags);
+			// }
+			// else {
+			// 	bio->bi_ebusy = prediction_model((char *)feature_vec, 0);
+			// }
+
+			if (__sec_off > 0) {
+				bio->bi_ebusy = prediction_model((char *)feature_vec, q);
+			}
+			// else {
+			// 	printk(KERN_ERR "*** generic_make_request_checks ***: Okay this one does not need a prediction\n");
+			// }
+			
+			// for (i=0; i<26; i++) {
+			// 	printk(KERN_ERR "*** Nan ***: %s prediction: %u, %d\n", bio->bi_disk->disk_name, i, 
+			// 		prediction_model((char *)(test_input[i]), q));
+			// }
+
+			// if (test_and_set_bit(0, &offloader_flags) == 0) {
+			// 	// printk(KERN_ERR "Start main\n");
+			// 	offloader_start = true;
+			// 	while (!offloader_end) {ndelay(1);}
+			// 	offloader_end = false;
+			// 	test_and_clear_bit(0, &offloader_flags);
+			// }
+			// bio->bi_ebusy = false;
+
+			// printk(KERN_ERR
+			// 	"*** Nan ***: block-device %s; has data %d; op %u; offset: %llu; cur bytes %u; "
+			// 	"queue depth %lu\n\t\t index %u; queue (%u, %u, %s, %lu, %s); (%u, %u, %s, %lu, %s); (%u, %u, %s, %lu, %s); (%u, %u, %s, %lu, %s)\n"
+			// 	"Feature vector %s\n"
+			// 	, bio_devname(bio, b), bio_has_data(bio), __op, __sec_off, __secs, 
+			// 	q->nr_requests, q->his_q_index[0], 
+			// 	q->his_io_queue[0][0].nr_io_4k_ss[0], q->his_io_queue[0][0].nr_io_4k_ss[1], (char *)(q->his_io_queue[0][0].pad_pending), q->his_io_queue[0][0].latency, (char *)(q->his_io_queue[0][0].pad_latency),
+			// 	q->his_io_queue[0][1].nr_io_4k_ss[0], q->his_io_queue[0][1].nr_io_4k_ss[1], (char *)(q->his_io_queue[0][1].pad_pending), q->his_io_queue[0][1].latency, (char *)(q->his_io_queue[0][1].pad_latency),
+			// 	q->his_io_queue[0][2].nr_io_4k_ss[0], q->his_io_queue[0][2].nr_io_4k_ss[1], (char *)(q->his_io_queue[0][2].pad_pending), q->his_io_queue[0][2].latency, (char *)(q->his_io_queue[0][2].pad_latency),
+			// 	q->his_io_queue[0][3].nr_io_4k_ss[0], q->his_io_queue[0][3].nr_io_4k_ss[1], (char *)(q->his_io_queue[0][3].pad_pending), q->his_io_queue[0][3].latency, (char *)(q->his_io_queue[0][3].pad_latency),
+			// 	// q->his_io_queue[0][4].nr_io_4k_ss[0], q->his_io_queue[0][4].nr_io_4k_ss[1], (char *)(q->his_io_queue[0][4].pad_pending), q->his_io_queue[0][4].latency, (char *)(q->his_io_queue[0][4].pad_latency),
+			// 	feature_vec);
+			
+			if (bio->bi_ebusy) {
+				// bio->bi_accepted = false;
+				// printk(KERN_ERR
+				// 	"*** generic_make_request_checks ***: IO REJECTED\n");
+				goto not_supported;
+			}
+
+			// bio->bi_ebusy = true;
+			// goto not_supported;
+		}
+
+		/*printk(KERN_ERR
+			"*** Nan ***: IO ACCEPTED, overhead: %ld\n"
+			, my_get_duration_ns(ts_start, ts_end));*/
+	}
+	}
+#endif
 
 	plug = blk_mq_plug(bio);
 	if (plug && plug->nowait)
