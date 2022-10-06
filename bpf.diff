@@ -1,0 +1,62 @@
+Only in linux-6.0/arch/x86/include: generated
+Only in linux-6.0: build
+Only in dddd/linux-6.0: .clang-format
+Only in dddd/linux-6.0: .cocciconfig
+Only in linux-6.0: compile_install.sh
+Only in linux-6.0: .config.old
+Only in dddd/linux-6.0: .get_maintainer.ignore
+Only in linux-6.0: .git
+Only in dddd/linux-6.0: .gitattributes
+diff --color -r linux-6.0/.gitignore dddd/linux-6.0/.gitignore
+40,41d39
+< *.rmeta
+< *.rsi
+102d99
+< !.rustfmt.toml
+168,170d164
+< 
+< # Rust analyzer configuration
+< /rust-project.json
+Only in linux-6.0/include: config
+Only in linux-6.0/include: generated
+diff --color -r linux-6.0/kernel/bpf/btf.c dddd/linux-6.0/kernel/bpf/btf.c
+207,208d206
+< 	BTF_KFUNC_HOOK_TRACEPOINT,
+< 	BTF_KFUNC_HOOK_KPROBE,
+7243,7246d7240
+< 	case BPF_PROG_TYPE_TRACEPOINT:
+< 		return BTF_KFUNC_HOOK_TRACEPOINT;
+< 	case BPF_PROG_TYPE_KPROBE:
+< 		return BTF_KFUNC_HOOK_KPROBE;
+Only in dddd/linux-6.0: .mailmap
+Only in linux-6.0: Module.symvers
+diff --color -r linux-6.0/net/bpf/test_run.c dddd/linux-6.0/net/bpf/test_run.c
+539,543d538
+< // u64 noinline bpf_kfunc_call_test0(void)
+< // {
+< // 	return 1;
+< // }
+< 
+708d702
+< //BTF_ID_FLAGS(func, bpf_kfunc_call_test0)
+1638,1639d1631
+< 	//ret = ret ?: register_btf_kfunc_id_set(BPF_PROG_TYPE_TRACEPOINT, &bpf_prog_test_kfunc_set);
+< 	//ret = ret ?: register_btf_kfunc_id_set(BPF_PROG_TYPE_KPROBE, &bpf_prog_test_kfunc_set);
+Only in linux-6.0/scripts: asn1_compiler
+Only in linux-6.0/scripts/basic: fixdep
+Only in linux-6.0/scripts: kallsyms
+Only in linux-6.0/scripts/kconfig: conf
+Only in linux-6.0/scripts/mod: devicetable-offsets.h
+Only in linux-6.0/scripts/mod: elfconfig.h
+Only in linux-6.0/scripts/mod: mk_elfconfig
+Only in linux-6.0/scripts/mod: modpost
+Only in linux-6.0/scripts: module.lds
+Only in linux-6.0/scripts/selinux/genheaders: genheaders
+Only in linux-6.0/scripts/selinux/mdp: mdp
+Only in linux-6.0/scripts: sorttable
+Only in linux-6.0/scripts: unifdef
+Only in linux-6.0: set_configs.sh
+Only in linux-6.0/tools/objtool/arch/x86: lib
+Only in linux-6.0/tools/objtool: fixdep
+Only in linux-6.0/tools/objtool: objtool
+Only in linux-6.0: .version
