@@ -418,7 +418,6 @@ struct blk_independent_access_ranges {
 		#define LEN_PAD_LATENCY 5
 		#define MAX_LATENCY 99999
 	#endif
-#endif
 
 // #define LEN_PAD_LATENCY 5
 struct ml_io_info {
@@ -437,8 +436,7 @@ struct ml_io_info {
 #define HIS_IO_QSIZE 4
 /* end */
 
-
-
+#endif
 
 struct request_queue {
 
