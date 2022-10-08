@@ -19,15 +19,14 @@
 #include <linux/sched/sysctl.h>
 #include <linux/blk-crypto.h>
 #include <linux/xarray.h>
+#include <linux/sysctl.h>
 
 #include <trace/events/block.h>
 #include "blk.h"
 #include "blk-rq-qos.h"
 #include "blk-cgroup.h"
 
-#ifdef LAKE_LINNOS
-#include "my_utils.h"
-#endif
+unsigned long sysctl_lake_enable_linnos = 0;
 
 struct bio_alloc_cache {
 	struct bio		*free_list;
@@ -277,7 +276,7 @@ void bio_init(struct bio *bio, struct block_device *bdev, struct bio_vec *table,
 	atomic_set(&bio->__bi_remaining, 1);
 	atomic_set(&bio->__bi_cnt, 1);
 	bio->bi_cookie = BLK_QC_T_NONE;
-#ifdef LAKE_LINNOS
+#ifdef CONFIG_LAKE_LINNOS
 	bio->bi_sec_size = 0;
 #endif
 	bio->bi_max_vecs = max_vecs;
@@ -1522,9 +1521,8 @@ static inline bool bio_remaining_done(struct bio *bio)
 	return false;
 }
 
-#ifdef LAKE_LINNOS
-inline long my_get_duration_ns(const struct timespec t_start, const struct timespec t_end) {
-
+#ifdef CONFIG_LAKE_LINNOS
+inline long my_get_duration_ns(const struct timespec64 t_start, const struct timespec64 t_end) {
 	return (t_end.tv_sec-t_start.tv_sec) * (long)1e9 + (t_end.tv_nsec-t_start.tv_nsec);
 }
 #endif
@@ -1544,19 +1542,16 @@ inline long my_get_duration_ns(const struct timespec t_start, const struct times
  **/
 void bio_endio(struct bio *bio)
 {
+#ifdef CONFIG_LAKE_LINNOS
+	if (sysctl_lake_enable_linnos && bio->bi_bdev) {
+		struct block_device *bdev = bio->bi_bdev;
+		struct request_queue *q = bdev_get_queue(bdev);
 
-#ifdef LAKE_LINNOS
-	if (bio->bi_disk) {
-		struct request_queue *q;
-
-		getnstimeofday(&(bio->bi_ts_end));
-		q = bio->bi_disk->queue;
+		//getnstimeofday(&(bio->bi_ts_end));
+		ktime_get_ts64(&(bio->bi_ts_end));
 
 		/* release number of 4k IOs nr_io_fourk in request_queue */
-		// q->nr_io_fourk -= (long)((__secs + 7) / 8);
-
 		if (q->ml_enabled && bio->bi_sec_size) {
-
 			long __secs = bio->bi_sec_size;
 			unsigned long __lat = my_get_duration_ns(bio->bi_ts_start, bio->bi_ts_end);
 
@@ -1564,24 +1559,22 @@ void bio_endio(struct bio *bio)
 			// 	printk(KERN_ERR "*** Nan ***: WTF, how come it is zero???\n");
 			// }
 
+			//io done, so decrement from q pending ops
 			his_queue_io4k_add(bio->bi_op_type, (long)(-((__secs+7) / 8)), q);
-			// printk(KERN_ERR
-			// 	"*** bio_endio ***: [%p] %s DE-request_queue (%u, %ld, %llu); read %u; write %u\n", bio
-			// 	, bio->bi_disk->disk_name, bio->bi_op_type, __secs, bio->bi_sec_off
-			// 	, q->nr_io_4k[0], q->nr_io_4k[1]);
-			// printk(KERN_ERR "Here goes a %d\n", bio->bi_op_type);
+			printk(KERN_ERR
+			 	"*** bio_endio ***: [%p] %s DE-request_queue (%u, %ld, %llu); read %u; write %u\n", bio
+			 	, bio->bi_bdev->bd_disk->disk_name, bio->bi_op_type, __secs, bio->bi_sec_off
+			 	, q->nr_io_4k[0], q->nr_io_4k[1]);
+			printk(KERN_ERR "Here goes a %d\n", bio->bi_op_type);
 
 			/* only record read op*/
 			// if ((!(bio->bi_ebusy)) && (bio->bi_op_type == 0)) {
-			if (bio->bi_op_type == 0) {
 			// if (1) {
-
-				// struct timespec ts_start, ts_end;
+			if (bio->bi_op_type == 0) {
 				char *__p_pending, *__p_latency;
 				unsigned int r_pending, w_pending;
 				unsigned long __lat_us;
 
-				// getnstimeofday(&ts_start);
 				spin_lock_irq(&(q->his_lock));
 
 				q->his_io_queue[0][q->his_q_index[0]] = (struct ml_io_info){
@@ -1589,8 +1582,6 @@ void bio_endio(struct bio *bio)
 					.sec_size = bio->bi_sec_size,
 					.sectors = bio->bi_sec_off,
 					.latency = __lat
-					// .pad_pending = __p_pending,
-					// .pad_latency = __p_latency
 				};
 
 				/* convert pending reads/writes 
@@ -1612,7 +1603,6 @@ void bio_endio(struct bio *bio)
 					r_pending = MAX_PENDING;
 				}	
 #endif
-
 				__p_pending = q->his_io_queue[0][q->his_q_index[0]].pad_pending;
 				his_queue_padding(__p_pending, r_pending, LEN_PAD_PENDING);
 				__p_pending[LEN_PAD_PENDING] = '\0';
@@ -1630,10 +1620,6 @@ void bio_endio(struct bio *bio)
 
 				q->his_q_index[0] = his_q_index_inc((q->his_q_index[0]), 1);
 				spin_unlock_irq(&(q->his_lock));
-				// getnstimeofday(&ts_end);
-				// printk(KERN_ERR
-				// 	"*** Nan ***: History queue insertion overhead: %ld\n"
-				// 	, my_get_duration_ns(ts_start, ts_end));
 			}
 
 			// printk(KERN_ERR
@@ -1897,3 +1883,23 @@ static int __init init_bio(void)
 	return 0;
 }
 subsys_initcall(init_bio);
+
+static struct ctl_table lake_sysctl_table[] = {
+	{
+		.procname	  = "lake_enable_linnos",
+		.data		  = &sysctl_lake_enable_linnos,
+		.maxlen	 	  = sizeof(unsigned int),
+		.mode		  = 0644,
+		.proc_handler = proc_dointvec_minmax,
+		.extra1		  = SYSCTL_ZERO,
+		.extra2		  = SYSCTL_TWO,
+	},
+	{ }
+};
+
+static int __init lake_syscall_sysctl_init(void)
+{
+	register_sysctl_init("kernel", lake_sysctl_table);
+	return 0;
+}
+late_initcall(lake_syscall_sysctl_init);

@@ -18,7 +18,6 @@
 #define NR_SCSI_DR 10
 
 // #define FEAT_31
-
 // #define LEN_INPUT 31
 // #define LEN_LAYER_0 256
 // #define LEN_LAYER_0_HALF 128

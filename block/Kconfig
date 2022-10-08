@@ -231,6 +231,9 @@ config BLOCK_HOLDER_DEPRECATED
 config BLK_MQ_STACKING
 	bool
 
+config LAKE_LINNOS
+	bool "Enables LinnOS implementation"
+
 source "block/Kconfig.iosched"
 
 endif # BLOCK

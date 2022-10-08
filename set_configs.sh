@@ -38,17 +38,10 @@ scripts/config --enable CONFIG_BPFILTER
 scripts/config --enable CONFIG_BPFILTER_UMH
 
 scripts/config --enable CONFIG_TEST_BPF
-#scripts/config --enable CONFIG_HZ
-
-#scripts/config --enable CONFIG_IKHEADERS
-#scripts/config --enable CONFIG_KPROBES
-#scripts/config --enable CONFIG_UPROBES
-#scripts/config --enable CONFIG_DEBUG_FS
-#scripts/config --enable CONFIG_FTRACE
 
 scripts/config --enable CONFIG_CMA
 scripts/config --enable CONFIG_DMA_CMA
-scripts/config --set-str LOCALVERSION "-lake"
+scripts/config --set-str LOCALVERSION "-lakelinnos"
 
 scripts/config --module CONFIG_ECRYPT_FS
 scripts/config --enable CONFIG_ECRYPT_FS_MESSAGING
@@ -56,5 +49,7 @@ scripts/config --module CONFIG_CRYPTO_AES_NI_INTEL
 
 scripts/config --disable SYSTEM_TRUSTED_KEYS
 scripts/config --disable SYSTEM_REVOCATION_KEYS
+
+scripts/config --enable CONFIG_LAKE_LINNOS
 
 make olddefconfig

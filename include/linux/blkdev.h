@@ -26,6 +26,8 @@
 #include <linux/uuid.h>
 #include <linux/xarray.h>
 
+extern unsigned long sysctl_lake_enable_linnos;
+
 struct module;
 struct request_queue;
 struct elevator_queue;
@@ -385,7 +387,7 @@ struct blk_independent_access_ranges {
 	struct blk_independent_access_range	ia_range[];
 };
 
-#ifdef LAKE_LINNOS
+#ifdef CONFIG_LAKE_LINNOS
 	/* For MLOS: history IO info tracking */
 	#define TARGET_DRIVE "nvme0n1"
 	#define NR_IO_TYPES 2	/* only record read=0 and write=1 */
@@ -440,7 +442,7 @@ struct ml_io_info {
 
 struct request_queue {
 
-#ifdef LAKE_LINNOS
+#ifdef CONFIG_LAKE_LINNOS
 	/* For MLOS: ML model info */
 	bool 				ml_enabled;
 	long 				*weight_0_T;
@@ -655,7 +657,7 @@ struct request_queue {
 				 (1 << QUEUE_FLAG_SAME_COMP) |		\
 				 (1 << QUEUE_FLAG_NOWAIT))
 
-#ifdef LAKE_LINNOS
+#ifdef CONFIG_LAKE_LINNOS
 /* For MLOS: history queue atomic operations*/
 void his_queue_io4k_add(unsigned int op, long nr_io4ks, struct request_queue *q);
 void his_queue_io4k_add_ss(unsigned int op, long nr_io4ks, struct request_queue *q, 

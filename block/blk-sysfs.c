@@ -20,7 +20,7 @@
 #include "blk-cgroup.h"
 #include "blk-throttle.h"
 
-#ifdef LAKE_LINNOS
+#ifdef CONFIG_LAKE_LINNOS
 #include "ml_models.h"
 #endif
 
@@ -806,7 +806,7 @@ struct kobj_type blk_queue_ktype = {
 	.release	= blk_release_queue,
 };
 
-#ifdef LAKE_LINNOS
+#ifdef CONFIG_LAKE_LINNOS
 struct request_queue *rq_list[NR_NVME_DR+NR_SCSI_DR];
 EXPORT_SYMBOL(rq_list);
 #endif
@@ -820,13 +820,15 @@ int blk_register_queue(struct gendisk *disk)
 	struct request_queue *q = disk->queue;
 	int ret;
 
-#ifdef LAKE_LINNOS
+#ifdef CONFIG_LAKE_LINNOS
 	/* LinnOS */
 	int ml_index;
 	char format_nvme[] = "nvmeXn1";
 	char format_scsi[] = "sdX";
 	format_nvme[4] = disk->disk_name[4];
 	format_scsi[2] = disk->disk_name[2];
+	printk(KERN_ERR "*** Registering queue for disk name %s\n", disk->disk_name);
+	//if nvmeX or sdX, set ml_index 
 	if (strcmp(format_nvme, disk->disk_name)==0) {
 		ml_index = disk->disk_name[4]-'0';
 	}
@@ -837,30 +839,26 @@ int blk_register_queue(struct gendisk *disk)
 		ml_index = -1;
 	}
 
+	//the lists are some super strange map-like struct
+	//this just gets the correct content for that drive
 	if (ml_index >= 0) {
 		q->ml_enabled = ml_enabled_list[ml_index];
 		q->weight_0_T = weight_0_T_list[ml_index];
 		q->weight_1_T = weight_1_T_list[ml_index];
 		q->bias_0 = bias_0_list[ml_index];
 		q->bias_1 = bias_1_list[ml_index];
-
 		rq_list[ml_index] = q;
 	}
 	else {
 		q->ml_enabled = false;
 	}
-
+	
 	printk(KERN_ERR "*** In blk_register_queue ***: "
 		"disk_name: %s; index: %d; ml_enabled: %d; model: %s\n", disk->disk_name, ml_index, q->ml_enabled
 		, model_name_list[ml_index]==NULL?"null":model_name_list[ml_index]);
 
-	/* deprecated */
-	// q->nvme_endio = strcmp("nvme1n1", disk->disk_name)==0?true:false;
-
-	// printk(KERN_ERR "*** In blk_register_queue ***: "
-	// 	"disk_name: %s; index: %d; ml_enabled: %d; model: %s; nvme_endio: %d\n", disk->disk_name, ml_index, q->ml_enabled
-	// 	, model_name_list[ml_index]==NULL?"null":model_name_list[ml_index], q->nvme_endio);
-	/* end */
+	//disabling just for testing
+	q->ml_enabled = false;
 #endif
 
 	mutex_lock(&q->sysfs_dir_lock);

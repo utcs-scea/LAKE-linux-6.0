@@ -45,8 +45,7 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/block.h>
 
-#ifdef LAKE_LINNOS
-#include "my_utils.h"
+#ifdef CONFIG_LAKE_LINNOS
 #include "ml_const.h"
 // #include "ml_test.h"
 #endif
@@ -79,7 +78,7 @@ struct kmem_cache *blk_requestq_srcu_cachep;
  */
 static struct workqueue_struct *kblockd_workqueue;
 
-#ifdef LAKE_LINNOS
+#ifdef CONFIG_LAKE_LINNOS
 
 /* for MLOS: implementation of history queue atomic add operation */
 void inline his_queue_io4k_add(unsigned int op, long nr_io4ks, struct request_queue *q) {
@@ -435,7 +434,7 @@ struct request_queue *blk_alloc_queue(int node_id, bool alloc_srcu)
 	if (!q)
 		return NULL;
 
-#ifdef LAKE_LINNOS
+#ifdef CONFIG_LAKE_LINNOS
 	/* for MLOS: history info queue initialization */
 	q->nr_io_4k[0] = 0;
 	q->nr_io_4k[1] = 0;
@@ -479,7 +478,7 @@ struct request_queue *blk_alloc_queue(int node_id, bool alloc_srcu)
 	mutex_init(&q->sysfs_dir_lock);
 	spin_lock_init(&q->queue_lock);
 
-#ifdef LAKE_LINNOS
+#ifdef CONFIG_LAKE_LINNOS
 	spin_lock_init(&q->his_lock);
 #endif	
 
@@ -620,17 +619,123 @@ static int blk_partition_remap(struct bio *bio)
 }
 
 
-#ifdef LAKE_LINNOS
+#ifdef CONFIG_LAKE_LINNOS
 
 static inline bool fake_prediction_model(unsigned int op, sector_t sec_offset, unsigned int sectors) {
-	const unsigned int OP_READ = 0;
-	if (op == OP_READ) {
-		if ((sectors > 512) || (sectors % 8 != 0) || (sec_offset % 8 != 0)) {
-			return false;
-		}
-	}
+	// const unsigned int OP_READ = 0;
+	// if (op == OP_READ) {
+	// 	if ((sectors > 512) || (sectors % 8 != 0) || (sec_offset % 8 != 0)) {
+	// 		return false;
+	// 	}
+	// }
 	return true;
 }
+
+static bool prediction_model(char *feat_vec, struct request_queue *rq) {
+
+	long input_vec_i[LEN_INPUT], mid_res_i[LEN_LAYER_0], final_res_i[LEN_LAYER_1];
+	long *weight_0_T_ent, * bias_0_ent, *weight_1_T_ent, * bias_1_ent; 
+	int i, j, k, offset;
+
+	for (i=0 ; i<LEN_INPUT; i++) {
+		input_vec_i[i] = (long)(feat_vec[i]);
+		// input_vec_i[i] = (long)(test_input[index][i]);
+	}
+
+	weight_0_T_ent = rq->weight_0_T;
+	weight_1_T_ent = rq->weight_1_T;
+	bias_0_ent = rq->bias_0;
+	bias_1_ent = rq->bias_1;
+
+	for (j = 0, offset=0; j < LEN_LAYER_0; j++, offset+=LEN_INPUT) {
+        mid_res_i[j] = 0;
+        //loop unroll
+#ifdef FEAT_31
+
+		mid_res_i[j] += (input_vec_i[0] == 0 || weight_0_T_ent[offset+0] == 0)? 0 : input_vec_i[0] * weight_0_T_ent[offset+0];
+		mid_res_i[j] += (input_vec_i[1] == 0 || weight_0_T_ent[offset+1] == 0)? 0 : input_vec_i[1] * weight_0_T_ent[offset+1];
+		mid_res_i[j] += (input_vec_i[2] == 0 || weight_0_T_ent[offset+2] == 0)? 0 : input_vec_i[2] * weight_0_T_ent[offset+2];
+		mid_res_i[j] += (input_vec_i[3] == 0 || weight_0_T_ent[offset+3] == 0)? 0 : input_vec_i[3] * weight_0_T_ent[offset+3];
+		mid_res_i[j] += (input_vec_i[4] == 0 || weight_0_T_ent[offset+4] == 0)? 0 : input_vec_i[4] * weight_0_T_ent[offset+4];
+		mid_res_i[j] += (input_vec_i[5] == 0 || weight_0_T_ent[offset+5] == 0)? 0 : input_vec_i[5] * weight_0_T_ent[offset+5];
+		mid_res_i[j] += (input_vec_i[6] == 0 || weight_0_T_ent[offset+6] == 0)? 0 : input_vec_i[6] * weight_0_T_ent[offset+6];
+		mid_res_i[j] += (input_vec_i[7] == 0 || weight_0_T_ent[offset+7] == 0)? 0 : input_vec_i[7] * weight_0_T_ent[offset+7];
+		mid_res_i[j] += (input_vec_i[8] == 0 || weight_0_T_ent[offset+8] == 0)? 0 : input_vec_i[8] * weight_0_T_ent[offset+8];
+		mid_res_i[j] += (input_vec_i[9] == 0 || weight_0_T_ent[offset+9] == 0)? 0 : input_vec_i[9] * weight_0_T_ent[offset+9];
+		mid_res_i[j] += (input_vec_i[10] == 0 || weight_0_T_ent[offset+10] == 0)? 0 : input_vec_i[10] * weight_0_T_ent[offset+10];
+		mid_res_i[j] += (input_vec_i[11] == 0 || weight_0_T_ent[offset+11] == 0)? 0 : input_vec_i[11] * weight_0_T_ent[offset+11];
+		mid_res_i[j] += (input_vec_i[12] == 0 || weight_0_T_ent[offset+12] == 0)? 0 : input_vec_i[12] * weight_0_T_ent[offset+12];
+		mid_res_i[j] += (input_vec_i[13] == 0 || weight_0_T_ent[offset+13] == 0)? 0 : input_vec_i[13] * weight_0_T_ent[offset+13];
+		mid_res_i[j] += (input_vec_i[14] == 0 || weight_0_T_ent[offset+14] == 0)? 0 : input_vec_i[14] * weight_0_T_ent[offset+14];
+		mid_res_i[j] += (input_vec_i[15] == 0 || weight_0_T_ent[offset+15] == 0)? 0 : input_vec_i[15] * weight_0_T_ent[offset+15];
+		mid_res_i[j] += (input_vec_i[16] == 0 || weight_0_T_ent[offset+16] == 0)? 0 : input_vec_i[16] * weight_0_T_ent[offset+16];
+		mid_res_i[j] += (input_vec_i[17] == 0 || weight_0_T_ent[offset+17] == 0)? 0 : input_vec_i[17] * weight_0_T_ent[offset+17];
+		mid_res_i[j] += (input_vec_i[18] == 0 || weight_0_T_ent[offset+18] == 0)? 0 : input_vec_i[18] * weight_0_T_ent[offset+18];
+		mid_res_i[j] += (input_vec_i[19] == 0 || weight_0_T_ent[offset+19] == 0)? 0 : input_vec_i[19] * weight_0_T_ent[offset+19];
+		mid_res_i[j] += (input_vec_i[20] == 0 || weight_0_T_ent[offset+20] == 0)? 0 : input_vec_i[20] * weight_0_T_ent[offset+20];
+		mid_res_i[j] += (input_vec_i[21] == 0 || weight_0_T_ent[offset+21] == 0)? 0 : input_vec_i[21] * weight_0_T_ent[offset+21];
+		mid_res_i[j] += (input_vec_i[22] == 0 || weight_0_T_ent[offset+22] == 0)? 0 : input_vec_i[22] * weight_0_T_ent[offset+22];
+		mid_res_i[j] += (input_vec_i[23] == 0 || weight_0_T_ent[offset+23] == 0)? 0 : input_vec_i[23] * weight_0_T_ent[offset+23];
+		mid_res_i[j] += (input_vec_i[24] == 0 || weight_0_T_ent[offset+24] == 0)? 0 : input_vec_i[24] * weight_0_T_ent[offset+24];
+		mid_res_i[j] += (input_vec_i[25] == 0 || weight_0_T_ent[offset+25] == 0)? 0 : input_vec_i[25] * weight_0_T_ent[offset+25];
+		mid_res_i[j] += (input_vec_i[26] == 0 || weight_0_T_ent[offset+26] == 0)? 0 : input_vec_i[26] * weight_0_T_ent[offset+26];
+		mid_res_i[j] += (input_vec_i[27] == 0 || weight_0_T_ent[offset+27] == 0)? 0 : input_vec_i[27] * weight_0_T_ent[offset+27];
+		mid_res_i[j] += (input_vec_i[28] == 0 || weight_0_T_ent[offset+28] == 0)? 0 : input_vec_i[28] * weight_0_T_ent[offset+28];
+		mid_res_i[j] += (input_vec_i[29] == 0 || weight_0_T_ent[offset+29] == 0)? 0 : input_vec_i[29] * weight_0_T_ent[offset+29];
+		mid_res_i[j] += (input_vec_i[30] == 0 || weight_0_T_ent[offset+30] == 0)? 0 : input_vec_i[30] * weight_0_T_ent[offset+30];
+
+#else
+        // if k%4==0
+        for (k = 0; k < LEN_INPUT; k += 4) {
+            // mid_res_i[j] += input_vec_i[k] * weight_i_0[k][j];
+            // mid_res_i[j] += input_vec_i[k+1] * weight_i_0[k+1][j];
+            // mid_res_i[j] += input_vec_i[k+2] * weight_i_0[k+2][j];
+            // mid_res_i[j] += input_vec_i[k+3] * weight_i_0[k+3][j];
+            mid_res_i[j] += (input_vec_i[k] == 0 || weight_i_0[k][j] == 0)? 0 : input_vec_i[k] * weight_i_0[k][j];
+            mid_res_i[j] += (input_vec_i[k+1] == 0 || weight_i_0[k+1][j] == 0)? 0 : input_vec_i[k+1] * weight_i_0[k+1][j];
+            mid_res_i[j] += (input_vec_i[k+2] == 0 || weight_i_0[k+2][j] == 0)? 0 : input_vec_i[k+2] * weight_i_0[k+2][j];
+            mid_res_i[j] += (input_vec_i[k+3] == 0 || weight_i_0[k+3][j] == 0)? 0 : input_vec_i[k+3] * weight_i_0[k+3][j];
+        }
+#endif
+        // apply bias
+        mid_res_i[j] += bias_0_ent[j];
+        // relu
+        if (mid_res_i[j] < 0) {
+            mid_res_i[j] = 0;
+        }
+    }
+    
+    final_res_i[0] = 0;
+    for(k=0; k<LEN_LAYER_0; k += 8) {
+        final_res_i[0] += (mid_res_i[k] == 0 || weight_1_T_ent[k] == 0)? 0 : mid_res_i[k] * weight_1_T_ent[k];
+		final_res_i[0] += (mid_res_i[k+1] == 0 || weight_1_T_ent[k+1] == 0)? 0 : mid_res_i[k+1] * weight_1_T_ent[k+1];
+		final_res_i[0] += (mid_res_i[k+2] == 0 || weight_1_T_ent[k+2] == 0)? 0 : mid_res_i[k+2] * weight_1_T_ent[k+2];
+		final_res_i[0] += (mid_res_i[k+3] == 0 || weight_1_T_ent[k+3] == 0)? 0 : mid_res_i[k+3] * weight_1_T_ent[k+3];
+		final_res_i[0] += (mid_res_i[k+4] == 0 || weight_1_T_ent[k+4] == 0)? 0 : mid_res_i[k+4] * weight_1_T_ent[k+4];
+		final_res_i[0] += (mid_res_i[k+5] == 0 || weight_1_T_ent[k+5] == 0)? 0 : mid_res_i[k+5] * weight_1_T_ent[k+5];
+		final_res_i[0] += (mid_res_i[k+6] == 0 || weight_1_T_ent[k+6] == 0)? 0 : mid_res_i[k+6] * weight_1_T_ent[k+6];
+		final_res_i[0] += (mid_res_i[k+7] == 0 || weight_1_T_ent[k+7] == 0)? 0 : mid_res_i[k+7] * weight_1_T_ent[k+7];
+	}
+	// apply bias
+	final_res_i[0] += bias_1_ent[0];
+
+	final_res_i[1] = 0;
+    for(k=0; k<LEN_LAYER_0; k += 8) {
+        final_res_i[1] += (mid_res_i[k] == 0 || weight_1_T_ent[k+256] == 0)? 0 : mid_res_i[k] * weight_1_T_ent[k+256];
+		final_res_i[1] += (mid_res_i[k+1] == 0 || weight_1_T_ent[k+257] == 0)? 0 : mid_res_i[k+1] * weight_1_T_ent[k+257];
+		final_res_i[1] += (mid_res_i[k+2] == 0 || weight_1_T_ent[k+258] == 0)? 0 : mid_res_i[k+2] * weight_1_T_ent[k+258];
+		final_res_i[1] += (mid_res_i[k+3] == 0 || weight_1_T_ent[k+259] == 0)? 0 : mid_res_i[k+3] * weight_1_T_ent[k+259];
+		final_res_i[1] += (mid_res_i[k+4] == 0 || weight_1_T_ent[k+260] == 0)? 0 : mid_res_i[k+4] * weight_1_T_ent[k+260];
+		final_res_i[1] += (mid_res_i[k+5] == 0 || weight_1_T_ent[k+261] == 0)? 0 : mid_res_i[k+5] * weight_1_T_ent[k+261];
+		final_res_i[1] += (mid_res_i[k+6] == 0 || weight_1_T_ent[k+262] == 0)? 0 : mid_res_i[k+6] * weight_1_T_ent[k+262];
+		final_res_i[1] += (mid_res_i[k+7] == 0 || weight_1_T_ent[k+263] == 0)? 0 : mid_res_i[k+7] * weight_1_T_ent[k+263];
+	}
+	// apply bias
+	final_res_i[1] += bias_1_ent[1];
+
+    return final_res_i[0]>=(final_res_i[1])? false: true;
+}
+
 
 // return true for EBUSY, false for non-EBUSY
 // static bool prediction_model(char *feat_vec) {
@@ -803,110 +908,6 @@ static inline bool fake_prediction_model(unsigned int op, sector_t sec_offset, u
 //     return final_res_i[0]>=(final_res_i[1]*100)? false: true;
 // }
 
-static bool prediction_model(char *feat_vec, struct request_queue *rq) {
-
-	long input_vec_i[LEN_INPUT], mid_res_i[LEN_LAYER_0], final_res_i[LEN_LAYER_1];
-	long *weight_0_T_ent, * bias_0_ent, *weight_1_T_ent, * bias_1_ent; 
-	int i, j, k, offset;
-
-	for (i=0 ; i<LEN_INPUT; i++) {
-		input_vec_i[i] = (long)(feat_vec[i]);
-		// input_vec_i[i] = (long)(test_input[index][i]);
-	}
-
-	weight_0_T_ent = rq->weight_0_T;
-	weight_1_T_ent = rq->weight_1_T;
-	bias_0_ent = rq->bias_0;
-	bias_1_ent = rq->bias_1;
-
-	for (j = 0, offset=0; j < LEN_LAYER_0; j++, offset+=LEN_INPUT) {
-        mid_res_i[j] = 0;
-        //loop unroll
-#ifdef FEAT_31
-
-		mid_res_i[j] += (input_vec_i[0] == 0 || weight_0_T_ent[offset+0] == 0)? 0 : input_vec_i[0] * weight_0_T_ent[offset+0];
-		mid_res_i[j] += (input_vec_i[1] == 0 || weight_0_T_ent[offset+1] == 0)? 0 : input_vec_i[1] * weight_0_T_ent[offset+1];
-		mid_res_i[j] += (input_vec_i[2] == 0 || weight_0_T_ent[offset+2] == 0)? 0 : input_vec_i[2] * weight_0_T_ent[offset+2];
-		mid_res_i[j] += (input_vec_i[3] == 0 || weight_0_T_ent[offset+3] == 0)? 0 : input_vec_i[3] * weight_0_T_ent[offset+3];
-		mid_res_i[j] += (input_vec_i[4] == 0 || weight_0_T_ent[offset+4] == 0)? 0 : input_vec_i[4] * weight_0_T_ent[offset+4];
-		mid_res_i[j] += (input_vec_i[5] == 0 || weight_0_T_ent[offset+5] == 0)? 0 : input_vec_i[5] * weight_0_T_ent[offset+5];
-		mid_res_i[j] += (input_vec_i[6] == 0 || weight_0_T_ent[offset+6] == 0)? 0 : input_vec_i[6] * weight_0_T_ent[offset+6];
-		mid_res_i[j] += (input_vec_i[7] == 0 || weight_0_T_ent[offset+7] == 0)? 0 : input_vec_i[7] * weight_0_T_ent[offset+7];
-		mid_res_i[j] += (input_vec_i[8] == 0 || weight_0_T_ent[offset+8] == 0)? 0 : input_vec_i[8] * weight_0_T_ent[offset+8];
-		mid_res_i[j] += (input_vec_i[9] == 0 || weight_0_T_ent[offset+9] == 0)? 0 : input_vec_i[9] * weight_0_T_ent[offset+9];
-		mid_res_i[j] += (input_vec_i[10] == 0 || weight_0_T_ent[offset+10] == 0)? 0 : input_vec_i[10] * weight_0_T_ent[offset+10];
-		mid_res_i[j] += (input_vec_i[11] == 0 || weight_0_T_ent[offset+11] == 0)? 0 : input_vec_i[11] * weight_0_T_ent[offset+11];
-		mid_res_i[j] += (input_vec_i[12] == 0 || weight_0_T_ent[offset+12] == 0)? 0 : input_vec_i[12] * weight_0_T_ent[offset+12];
-		mid_res_i[j] += (input_vec_i[13] == 0 || weight_0_T_ent[offset+13] == 0)? 0 : input_vec_i[13] * weight_0_T_ent[offset+13];
-		mid_res_i[j] += (input_vec_i[14] == 0 || weight_0_T_ent[offset+14] == 0)? 0 : input_vec_i[14] * weight_0_T_ent[offset+14];
-		mid_res_i[j] += (input_vec_i[15] == 0 || weight_0_T_ent[offset+15] == 0)? 0 : input_vec_i[15] * weight_0_T_ent[offset+15];
-		mid_res_i[j] += (input_vec_i[16] == 0 || weight_0_T_ent[offset+16] == 0)? 0 : input_vec_i[16] * weight_0_T_ent[offset+16];
-		mid_res_i[j] += (input_vec_i[17] == 0 || weight_0_T_ent[offset+17] == 0)? 0 : input_vec_i[17] * weight_0_T_ent[offset+17];
-		mid_res_i[j] += (input_vec_i[18] == 0 || weight_0_T_ent[offset+18] == 0)? 0 : input_vec_i[18] * weight_0_T_ent[offset+18];
-		mid_res_i[j] += (input_vec_i[19] == 0 || weight_0_T_ent[offset+19] == 0)? 0 : input_vec_i[19] * weight_0_T_ent[offset+19];
-		mid_res_i[j] += (input_vec_i[20] == 0 || weight_0_T_ent[offset+20] == 0)? 0 : input_vec_i[20] * weight_0_T_ent[offset+20];
-		mid_res_i[j] += (input_vec_i[21] == 0 || weight_0_T_ent[offset+21] == 0)? 0 : input_vec_i[21] * weight_0_T_ent[offset+21];
-		mid_res_i[j] += (input_vec_i[22] == 0 || weight_0_T_ent[offset+22] == 0)? 0 : input_vec_i[22] * weight_0_T_ent[offset+22];
-		mid_res_i[j] += (input_vec_i[23] == 0 || weight_0_T_ent[offset+23] == 0)? 0 : input_vec_i[23] * weight_0_T_ent[offset+23];
-		mid_res_i[j] += (input_vec_i[24] == 0 || weight_0_T_ent[offset+24] == 0)? 0 : input_vec_i[24] * weight_0_T_ent[offset+24];
-		mid_res_i[j] += (input_vec_i[25] == 0 || weight_0_T_ent[offset+25] == 0)? 0 : input_vec_i[25] * weight_0_T_ent[offset+25];
-		mid_res_i[j] += (input_vec_i[26] == 0 || weight_0_T_ent[offset+26] == 0)? 0 : input_vec_i[26] * weight_0_T_ent[offset+26];
-		mid_res_i[j] += (input_vec_i[27] == 0 || weight_0_T_ent[offset+27] == 0)? 0 : input_vec_i[27] * weight_0_T_ent[offset+27];
-		mid_res_i[j] += (input_vec_i[28] == 0 || weight_0_T_ent[offset+28] == 0)? 0 : input_vec_i[28] * weight_0_T_ent[offset+28];
-		mid_res_i[j] += (input_vec_i[29] == 0 || weight_0_T_ent[offset+29] == 0)? 0 : input_vec_i[29] * weight_0_T_ent[offset+29];
-		mid_res_i[j] += (input_vec_i[30] == 0 || weight_0_T_ent[offset+30] == 0)? 0 : input_vec_i[30] * weight_0_T_ent[offset+30];
-
-#else
-        // if k%4==0
-        for (k = 0; k < LEN_INPUT; k += 4) {
-            // mid_res_i[j] += input_vec_i[k] * weight_i_0[k][j];
-            // mid_res_i[j] += input_vec_i[k+1] * weight_i_0[k+1][j];
-            // mid_res_i[j] += input_vec_i[k+2] * weight_i_0[k+2][j];
-            // mid_res_i[j] += input_vec_i[k+3] * weight_i_0[k+3][j];
-            mid_res_i[j] += (input_vec_i[k] == 0 || weight_i_0[k][j] == 0)? 0 : input_vec_i[k] * weight_i_0[k][j];
-            mid_res_i[j] += (input_vec_i[k+1] == 0 || weight_i_0[k+1][j] == 0)? 0 : input_vec_i[k+1] * weight_i_0[k+1][j];
-            mid_res_i[j] += (input_vec_i[k+2] == 0 || weight_i_0[k+2][j] == 0)? 0 : input_vec_i[k+2] * weight_i_0[k+2][j];
-            mid_res_i[j] += (input_vec_i[k+3] == 0 || weight_i_0[k+3][j] == 0)? 0 : input_vec_i[k+3] * weight_i_0[k+3][j];
-        }
-#endif
-        // apply bias
-        mid_res_i[j] += bias_0_ent[j];
-        // relu
-        if (mid_res_i[j] < 0) {
-            mid_res_i[j] = 0;
-        }
-    }
-    
-    final_res_i[0] = 0;
-    for(k=0; k<LEN_LAYER_0; k += 8) {
-        final_res_i[0] += (mid_res_i[k] == 0 || weight_1_T_ent[k] == 0)? 0 : mid_res_i[k] * weight_1_T_ent[k];
-		final_res_i[0] += (mid_res_i[k+1] == 0 || weight_1_T_ent[k+1] == 0)? 0 : mid_res_i[k+1] * weight_1_T_ent[k+1];
-		final_res_i[0] += (mid_res_i[k+2] == 0 || weight_1_T_ent[k+2] == 0)? 0 : mid_res_i[k+2] * weight_1_T_ent[k+2];
-		final_res_i[0] += (mid_res_i[k+3] == 0 || weight_1_T_ent[k+3] == 0)? 0 : mid_res_i[k+3] * weight_1_T_ent[k+3];
-		final_res_i[0] += (mid_res_i[k+4] == 0 || weight_1_T_ent[k+4] == 0)? 0 : mid_res_i[k+4] * weight_1_T_ent[k+4];
-		final_res_i[0] += (mid_res_i[k+5] == 0 || weight_1_T_ent[k+5] == 0)? 0 : mid_res_i[k+5] * weight_1_T_ent[k+5];
-		final_res_i[0] += (mid_res_i[k+6] == 0 || weight_1_T_ent[k+6] == 0)? 0 : mid_res_i[k+6] * weight_1_T_ent[k+6];
-		final_res_i[0] += (mid_res_i[k+7] == 0 || weight_1_T_ent[k+7] == 0)? 0 : mid_res_i[k+7] * weight_1_T_ent[k+7];
-	}
-	// apply bias
-	final_res_i[0] += bias_1_ent[0];
-
-	final_res_i[1] = 0;
-    for(k=0; k<LEN_LAYER_0; k += 8) {
-        final_res_i[1] += (mid_res_i[k] == 0 || weight_1_T_ent[k+256] == 0)? 0 : mid_res_i[k] * weight_1_T_ent[k+256];
-		final_res_i[1] += (mid_res_i[k+1] == 0 || weight_1_T_ent[k+257] == 0)? 0 : mid_res_i[k+1] * weight_1_T_ent[k+257];
-		final_res_i[1] += (mid_res_i[k+2] == 0 || weight_1_T_ent[k+258] == 0)? 0 : mid_res_i[k+2] * weight_1_T_ent[k+258];
-		final_res_i[1] += (mid_res_i[k+3] == 0 || weight_1_T_ent[k+259] == 0)? 0 : mid_res_i[k+3] * weight_1_T_ent[k+259];
-		final_res_i[1] += (mid_res_i[k+4] == 0 || weight_1_T_ent[k+260] == 0)? 0 : mid_res_i[k+4] * weight_1_T_ent[k+260];
-		final_res_i[1] += (mid_res_i[k+5] == 0 || weight_1_T_ent[k+261] == 0)? 0 : mid_res_i[k+5] * weight_1_T_ent[k+261];
-		final_res_i[1] += (mid_res_i[k+6] == 0 || weight_1_T_ent[k+262] == 0)? 0 : mid_res_i[k+6] * weight_1_T_ent[k+262];
-		final_res_i[1] += (mid_res_i[k+7] == 0 || weight_1_T_ent[k+263] == 0)? 0 : mid_res_i[k+7] * weight_1_T_ent[k+263];
-	}
-	// apply bias
-	final_res_i[1] += bias_1_ent[1];
-
-    return final_res_i[0]>=(final_res_i[1])? false: true;
-}
 
 // long input_vec_off[LEN_INPUT], mid_res_off[LEN_LAYER_0];
 // bool offloader_start, offloader_end;
@@ -1100,7 +1101,6 @@ static bool prediction_model(char *feat_vec, struct request_queue *rq) {
 
 #define TARGET_PRIO 16388
 
-
 #endif
 
 /*
@@ -1180,8 +1180,8 @@ static void __submit_bio_noacct(struct bio *bio)
 	bio_list_init(&bio_list_on_stack[0]);
 	current->bio_list = bio_list_on_stack;
 
-#ifdef LAKE_LINNOS
-	bio->bi_first = current->bio_list?false:true;
+#ifdef CONFIG_LAKE_LINNOS
+	bio->bi_first = current->bio_list ? false : true;
 #endif
 
 	do {
@@ -1266,23 +1266,16 @@ void submit_bio_noacct(struct bio *bio)
 
 	might_sleep();
 
-#ifdef LAKE_LINNOS
-	getnstimeofday(&(bio->bi_ts_start));
-	/* Nan: for debugging */
-	{
+#ifdef CONFIG_LAKE_LINNOS
+	ktime_get_ts64(&(bio->bi_ts_start));
 
-	// getnstimeofday(&ts_start);
-	if (q->ml_enabled && bio->bi_first) {
-		
+	printk(KERN_ERR "*** generic_make_request_checks ***: %s bio->bi_end_io = %p\n"
+		, bio->bi_bdev->bd_disk->disk_name, bio->bi_end_io);
+
+	if (sysctl_lake_enable_linnos && q->ml_enabled && bio->bi_first) {
 		unsigned int __op = bio_op(bio);
 		sector_t __sec_off = ((bio)->bi_iter).bi_sector;
 		unsigned int __secs = bio_sectors(bio);
-
-		// getnstimeofday(&ts_end);
-		/* LinnOS debug */
-		// printk(KERN_ERR "*** generic_make_request_checks ***: %s bio->bi_end_io = %p\n"
-		// 	, bio->bi_disk->disk_name, bio->bi_end_io);
-		/* end */
 
 		/* assignments for later use in bio_endio */
 		bio->bi_ebusy = false;
@@ -1292,23 +1285,21 @@ void submit_bio_noacct(struct bio *bio)
 
 		/* record number of 4k IOs nr_io_4k in request_queue */
 		/* snapshot the current nr_io_4k and store it in the request's bio */
-		// q->nr_io_fourk += (long)((__secs + 7) / 8);
+		// this is floor of /8. add to q's io count
 		his_queue_io4k_add_ss(__op, (long)((__secs + 7) / 8), q, bio);
+		
 		// printk(KERN_ERR
 		// 	"*** generic_make_request_checks ***: [%p] %s EN-request_queue (%u, %d, %llu); read %u; write %u\n", bio
 		// 	, bio->bi_disk->disk_name, bio->bi_op_type, bio->bi_sec_size, bio->bi_sec_off, q->nr_io_4k[0], q->nr_io_4k[1]);
 		// printk(KERN_ERR "Here comes a %d\n", __op);
 
+		//if its a read
 		if (__op == 0 && TARGET_PRIO != bio_prio(bio)) {
-
-			// bool ebusy;
 			char feature_vec[(LEN_PAD_PENDING+LEN_PAD_LATENCY)*HIS_IO_QSIZE+LEN_PAD_PENDING+1];
 			unsigned int len_vec = (LEN_PAD_PENDING+LEN_PAD_LATENCY)*HIS_IO_QSIZE+LEN_PAD_PENDING;
 			unsigned int loc_lat = LEN_PAD_PENDING*(HIS_IO_QSIZE+1);
 			unsigned int __index, i, r_pending, w_pending;
-			// struct timespec ts_start, ts_end;
 
-			// getnstimeofday(&ts_start);
 			spin_lock_irq(&(q->his_lock));
 			/* feature vector generation */
 			__index = q->his_q_index[0];
@@ -1340,10 +1331,6 @@ void submit_bio_noacct(struct bio *bio)
 			feature_vec[len_vec] = '\0';
 
 			spin_unlock_irq(&(q->his_lock));
-			// getnstimeofday(&ts_end);
-			// printk(KERN_ERR
-			// 	"*** Nan ***: Feature vec generation overhead: %ld\n"
-			// 	, my_get_duration_ns(ts_start, ts_end));
 
 			// if (test_and_set_bit(0, &offloader_flags)==0) {
 			// 	// bio->bi_ebusy = prediction_model_off((char *)feature_vec);
@@ -1354,13 +1341,11 @@ void submit_bio_noacct(struct bio *bio)
 			// 	bio->bi_ebusy = prediction_model((char *)feature_vec, 0);
 			// }
 
+			//if offset is not 0, i guess, do the prediction
 			if (__sec_off > 0) {
 				bio->bi_ebusy = prediction_model((char *)feature_vec, q);
 			}
-			// else {
-			// 	printk(KERN_ERR "*** generic_make_request_checks ***: Okay this one does not need a prediction\n");
-			// }
-			
+
 			// for (i=0; i<26; i++) {
 			// 	printk(KERN_ERR "*** Nan ***: %s prediction: %u, %d\n", bio->bi_disk->disk_name, i, 
 			// 		prediction_model((char *)(test_input[i]), q));
@@ -1388,21 +1373,14 @@ void submit_bio_noacct(struct bio *bio)
 			// 	// q->his_io_queue[0][4].nr_io_4k_ss[0], q->his_io_queue[0][4].nr_io_4k_ss[1], (char *)(q->his_io_queue[0][4].pad_pending), q->his_io_queue[0][4].latency, (char *)(q->his_io_queue[0][4].pad_latency),
 			// 	feature_vec);
 			
+			//if we predicted slow, avoid this IO
 			if (bio->bi_ebusy) {
-				// bio->bi_accepted = false;
-				// printk(KERN_ERR
-				// 	"*** generic_make_request_checks ***: IO REJECTED\n");
+				printk(KERN_ERR "*** generic_make_request_checks ***: IO REJECTED\n");
 				goto not_supported;
 			}
-
-			// bio->bi_ebusy = true;
-			// goto not_supported;
 		}
 
-		/*printk(KERN_ERR
-			"*** Nan ***: IO ACCEPTED, overhead: %ld\n"
-			, my_get_duration_ns(ts_start, ts_end));*/
-	}
+		printk(KERN_ERR "*** : IO ACCEPTED\n");
 	}
 #endif
 
