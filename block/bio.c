@@ -27,6 +27,7 @@
 #include "blk-cgroup.h"
 
 unsigned long sysctl_lake_enable_linnos = 0;
+EXPORT_SYMBOL(sysctl_lake_enable_linnos)
 
 struct bio_alloc_cache {
 	struct bio		*free_list;
@@ -1547,7 +1548,6 @@ void bio_endio(struct bio *bio)
 		struct block_device *bdev = bio->bi_bdev;
 		struct request_queue *q = bdev_get_queue(bdev);
 
-		//getnstimeofday(&(bio->bi_ts_end));
 		ktime_get_ts64(&(bio->bi_ts_end));
 
 		/* release number of 4k IOs nr_io_fourk in request_queue */
@@ -1884,22 +1884,22 @@ static int __init init_bio(void)
 }
 subsys_initcall(init_bio);
 
-static struct ctl_table lake_sysctl_table[] = {
-	{
-		.procname	  = "lake_enable_linnos",
-		.data		  = &sysctl_lake_enable_linnos,
-		.maxlen	 	  = sizeof(unsigned int),
-		.mode		  = 0644,
-		.proc_handler = proc_dointvec_minmax,
-		.extra1		  = SYSCTL_ZERO,
-		.extra2		  = SYSCTL_TWO,
-	},
-	{ }
-};
+// static struct ctl_table lake_sysctl_table[] = {
+// 	{
+// 		.procname	  = "lake_enable_linnos",
+// 		.data		  = &sysctl_lake_enable_linnos,
+// 		.maxlen	 	  = sizeof(unsigned int),
+// 		.mode		  = 0644,
+// 		.proc_handler = proc_dointvec_minmax,
+// 		.extra1		  = SYSCTL_ZERO,
+// 		.extra2		  = SYSCTL_TWO,
+// 	},
+// 	{ }
+// };
 
-static int __init lake_syscall_sysctl_init(void)
-{
-	register_sysctl_init("kernel", lake_sysctl_table);
-	return 0;
-}
-late_initcall(lake_syscall_sysctl_init);
+// static int __init lake_syscall_sysctl_init(void)
+// {
+// 	register_sysctl_init("kernel", lake_sysctl_table);
+// 	return 0;
+// }
+// late_initcall(lake_syscall_sysctl_init);

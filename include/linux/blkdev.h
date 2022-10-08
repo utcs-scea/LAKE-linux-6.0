@@ -389,7 +389,6 @@ struct blk_independent_access_ranges {
 
 #ifdef CONFIG_LAKE_LINNOS
 	/* For MLOS: history IO info tracking */
-	#define TARGET_DRIVE "nvme0n1"
 	#define NR_IO_TYPES 2	/* only record read=0 and write=1 */
 
 	// define the length of pending
@@ -423,15 +422,12 @@ struct blk_independent_access_ranges {
 
 // #define LEN_PAD_LATENCY 5
 struct ml_io_info {
-
 	unsigned int 		nr_io_4k_ss[NR_IO_TYPES];	/* The snapshot of 4k IOs in queue */
 	// unsigned int 		nr_io_4k_ss;
-
 	// unsigned short 		type;
 	unsigned int 		sec_size;
 	sector_t 			sectors;
 	unsigned long 		latency;
-
 	char 				pad_pending[LEN_PAD_PENDING+1];
 	char 				pad_latency[LEN_PAD_LATENCY+1];
 };
@@ -441,24 +437,6 @@ struct ml_io_info {
 #endif
 
 struct request_queue {
-
-#ifdef CONFIG_LAKE_LINNOS
-	/* For MLOS: ML model info */
-	bool 				ml_enabled;
-	long 				*weight_0_T;
-	long 				*weight_1_T;
-	long 				*bias_0;
-	long 				*bias_1;
-	/* end */
-
-	/* For MLOS: history IO info tracking */
-	// bool 				nvme_endio;
-	unsigned int 		nr_io_4k[NR_IO_TYPES];
-	struct ml_io_info 	his_io_queue[NR_IO_TYPES][HIS_IO_QSIZE];
-	unsigned int 		his_q_index[NR_IO_TYPES];
-	spinlock_t			his_lock;
-#endif
-
 	struct request		*last_merge;
 	struct elevator_queue	*elevator;
 
@@ -616,6 +594,25 @@ struct request_queue {
 	struct mutex		debugfs_mutex;
 
 	bool			mq_sysfs_init_done;
+
+#ifdef CONFIG_LAKE_LINNOS
+	/* For MLOS: ML model info */
+	bool 				ml_enabled;
+	long 				*weight_0_T;
+	long 				*weight_1_T;
+	long 				*bias_0;
+	long 				*bias_1;
+	//eventually we only have one that is kprobed
+	bool 	(*predictor)(char*, int, long**);
+	bool 	(*gpu_predictor)(char*, int, long**);
+	/* end */
+
+	/* For MLOS: history IO info tracking */
+	unsigned int 		nr_io_4k[NR_IO_TYPES];
+	struct ml_io_info 	his_io_queue[NR_IO_TYPES][HIS_IO_QSIZE];
+	unsigned int 		his_q_index[NR_IO_TYPES];
+	spinlock_t			his_lock;
+#endif
 
 	/**
 	 * @srcu: Sleepable RCU. Use as lock when type of the request queue
