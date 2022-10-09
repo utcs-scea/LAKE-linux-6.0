@@ -27,7 +27,7 @@
 #include "blk-cgroup.h"
 
 unsigned long sysctl_lake_enable_linnos = 0;
-EXPORT_SYMBOL(sysctl_lake_enable_linnos)
+EXPORT_SYMBOL(sysctl_lake_enable_linnos);
 
 struct bio_alloc_cache {
 	struct bio		*free_list;

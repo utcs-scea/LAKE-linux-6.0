@@ -785,10 +785,12 @@ void submit_bio_noacct(struct bio *bio)
 #ifdef CONFIG_LAKE_LINNOS
 	ktime_get_ts64(&(bio->bi_ts_start));
 
-	if (sysctl_lake_enable_linnos && q->ml_enabled && bio->bi_first) {
+	//the stars must line up
+	if (sysctl_lake_enable_linnos && q->ml_enabled && q->predictor && bio->bi_first) {
 		unsigned int __op = bio_op(bio);
 		sector_t __sec_off = ((bio)->bi_iter).bi_sector;
 		unsigned int __secs = bio_sectors(bio);
+		long *weights[4] = {0,0,0,0};
 
 		/* assignments for later use in bio_endio */
 		bio->bi_ebusy = false;
@@ -856,9 +858,12 @@ void submit_bio_noacct(struct bio *bio)
 
 			//if offset is not 0, i guess, do the prediction
 			if (__sec_off > 0) {
-				//bio->bi_ebusy = prediction_model((char *)feature_vec, q);
-				bio->bi_ebusy = fake_prediction_model((char *)feature_vec, q);
+				weights[0] = q->weight_0_T;
+				weights[1] = q->weight_1_T;
+				weights[2] = q->bias_0;
+				weights[3] = q->bias_1;
 				//true means reject
+				bio->bi_ebusy = q->predictor((char *)feature_vec, 1, weights);
 			}
 
 			// for (i=0; i<26; i++) {
