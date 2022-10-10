@@ -260,7 +260,6 @@ struct bio {
 	
 #ifdef CONFIG_LAKE_LINNOS
 	/* For MLOS: IO timestamps */
-	bool 				bi_first;		/* first time make_request_fn? */
 	bool 				bi_ebusy;		/* bio ebusy? */
 	unsigned int 		bi_op_type;		/* bio operation type*/
 	sector_t			bi_sec_off;		/* bio offset in sectors */

@@ -696,10 +696,6 @@ static void __submit_bio_noacct(struct bio *bio)
 	bio_list_init(&bio_list_on_stack[0]);
 	current->bio_list = bio_list_on_stack;
 
-#ifdef CONFIG_LAKE_LINNOS
-	bio->bi_first = current->bio_list ? false : true;
-#endif
-
 	do {
 		struct request_queue *q = bdev_get_queue(bio->bi_bdev);
 		struct bio_list lower, same;
@@ -758,8 +754,9 @@ void submit_bio_noacct_nocheck(struct bio *bio)
 	 */
 	if (current->bio_list)
 		bio_list_add(&current->bio_list[0], bio);
-	else if (!bio->bi_bdev->bd_disk->fops->submit_bio)
+	else if (!bio->bi_bdev->bd_disk->fops->submit_bio) {
 		__submit_bio_noacct_mq(bio);
+	}
 	else
 		__submit_bio_noacct(bio);
 }
@@ -785,8 +782,8 @@ void submit_bio_noacct(struct bio *bio)
 #ifdef CONFIG_LAKE_LINNOS
 	ktime_get_ts64(&(bio->bi_ts_start));
 
-	//the stars must line up
-	if (sysctl_lake_enable_linnos && q->ml_enabled && q->predictor && bio->bi_first) {
+	//the stars must align
+	if (sysctl_lake_enable_linnos && q->ml_enabled && q->predictor && !current->bio_list) {
 		unsigned int __op = bio_op(bio);
 		sector_t __sec_off = ((bio)->bi_iter).bi_sector;
 		unsigned int __secs = bio_sectors(bio);
@@ -803,10 +800,9 @@ void submit_bio_noacct(struct bio *bio)
 		// this is floor of /8. add to q's io count
 		his_queue_io4k_add_ss(__op, (long)((__secs + 7) / 8), q, bio);
 		
-		printk(KERN_ERR
-			"*** generic_make_request_checks ***: [%p] %s EN-request_queue (%u, %d, %llu); read %u; write %u\n", bio, 
-			bio->bi_bdev->bd_disk->disk_name, bio->bi_op_type, bio->bi_sec_size, bio->bi_sec_off, q->nr_io_4k[0], q->nr_io_4k[1]);
-		//printk(KERN_ERR "Here comes a %d\n", __op);
+		//printk(KERN_ERR
+		//	"*** generic_make_request_checks ***: [%p] %s EN-request_queue (%u, %d, %llu); reads %u; writes %u\n", bio, 
+		//	bio->bi_bdev->bd_disk->disk_name, bio->bi_op_type, bio->bi_sec_size, bio->bi_sec_off, q->nr_io_4k[0], q->nr_io_4k[1]);
 
 		//if its a read
 		if (__op == 0 && TARGET_PRIO != bio_prio(bio)) {
@@ -899,8 +895,7 @@ void submit_bio_noacct(struct bio *bio)
 				goto not_supported;
 			}
 		}
-
-		printk(KERN_ERR "*** : IO ACCEPTED\n");
+		//printk(KERN_ERR "*** : IO ACCEPTED\n");
 	}
 #endif
 
