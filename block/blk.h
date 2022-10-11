@@ -14,6 +14,10 @@ struct elevator_type;
 
 extern struct dentry *blk_debugfs_root;
 
+#ifdef CONFIG_LAKE_LINNOS
+extern unsigned long sysctl_lake_linnos_debug;
+#endif
+
 struct blk_flush_queue {
 	unsigned int		flush_pending_idx:1;
 	unsigned int		flush_running_idx:1;

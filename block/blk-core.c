@@ -800,10 +800,12 @@ void submit_bio_noacct(struct bio *bio)
 		// this is floor of /8. add to q's io count
 		his_queue_io4k_add_ss(__op, (long)((__secs + 7) / 8), q, bio);
 		
-		//printk(KERN_ERR
-		//	"*** generic_make_request_checks ***: [%p] %s EN-request_queue (%u, %d, %llu); reads %u; writes %u\n", bio, 
-		//	bio->bi_bdev->bd_disk->disk_name, bio->bi_op_type, bio->bi_sec_size, bio->bi_sec_off, q->nr_io_4k[0], q->nr_io_4k[1]);
-
+		// if (sysctl_lake_linnos_debug) {
+		// 	printk(KERN_ERR
+		// 	"*** generic_make_request_checks ***: [%p] %s EN-request_queue (%u, %d, %llu); reads %u; writes %u\n", bio, 
+		// 	bio->bi_bdev->bd_disk->disk_name, bio->bi_op_type, bio->bi_sec_size, bio->bi_sec_off, q->nr_io_4k[0], q->nr_io_4k[1]);
+		// }
+		
 		//if its a read
 		if (__op == 0 && TARGET_PRIO != bio_prio(bio)) {
 			char feature_vec[(LEN_PAD_PENDING+LEN_PAD_LATENCY)*HIS_IO_QSIZE+LEN_PAD_PENDING+1];
@@ -891,7 +893,8 @@ void submit_bio_noacct(struct bio *bio)
 			
 			//if we predicted slow, avoid this IO
 			if (bio->bi_ebusy) {
-				printk(KERN_ERR "*** generic_make_request_checks ***: IO REJECTED\n");
+				if (sysctl_lake_linnos_debug) 
+					printk(KERN_ERR "*** generic_make_request_checks ***: IO REJECTED\n");
 				goto not_supported;
 			}
 		}
