@@ -783,7 +783,11 @@ void submit_bio_noacct(struct bio *bio)
 	ktime_get_ts64(&(bio->bi_ts_start));
 
 	//the stars must align
-	if (sysctl_lake_enable_linnos && q->ml_enabled && q->predictor && !current->bio_list) {
+	if(sysctl_lake_linnos_debug == 2)
+		pr_warn("conds disk %s %d %d %d %d\n", bio->bi_bdev->bd_disk->disk_name,
+			sysctl_lake_enable_linnos, q->ml_enabled, q->predictor, !current->bio_list);
+
+	if (sysctl_lake_enable_linnos && q->ml_enabled && q->predictor!=0 && !current->bio_list) {
 		unsigned int __op = bio_op(bio);
 		sector_t __sec_off = ((bio)->bi_iter).bi_sector;
 		unsigned int __secs = bio_sectors(bio);
@@ -800,12 +804,16 @@ void submit_bio_noacct(struct bio *bio)
 		// this is floor of /8. add to q's io count
 		his_queue_io4k_add_ss(__op, (long)((__secs + 7) / 8), q, bio);
 		
-		// if (sysctl_lake_linnos_debug) {
-		// 	printk(KERN_ERR
-		// 	"*** generic_make_request_checks ***: [%p] %s EN-request_queue (%u, %d, %llu); reads %u; writes %u\n", bio, 
-		// 	bio->bi_bdev->bd_disk->disk_name, bio->bi_op_type, bio->bi_sec_size, bio->bi_sec_off, q->nr_io_4k[0], q->nr_io_4k[1]);
-		// }
+		if (sysctl_lake_linnos_debug == 2) {
+			printk(KERN_ERR
+			"*** generic_make_request_checks ***: [%p] %s EN-request_queue (%u, %d, %llu); reads %u; writes %u\n", bio, 
+			bio->bi_bdev->bd_disk->disk_name, bio->bi_op_type, bio->bi_sec_size, bio->bi_sec_off, q->nr_io_4k[0], q->nr_io_4k[1]);
+		}
 		
+		if(sysctl_lake_linnos_debug == 2) {
+			pr_warn("op %d is read? %d prio %d \n", __op, __op == 0, bio_prio(bio));
+		}
+
 		//if its a read
 		if (__op == 0 && TARGET_PRIO != bio_prio(bio)) {
 			char feature_vec[(LEN_PAD_PENDING+LEN_PAD_LATENCY)*HIS_IO_QSIZE+LEN_PAD_PENDING+1];
@@ -855,6 +863,9 @@ void submit_bio_noacct(struct bio *bio)
 			// }
 
 			//if offset is not 0, i guess, do the prediction
+			if (sysctl_lake_linnos_debug == 2) {
+				pr_warn("history done, checking __sec_off: %llu  %d\n", __sec_off, __sec_off > 0);
+			}
 			if (__sec_off > 0) {
 				weights[0] = q->weight_0_T;
 				weights[1] = q->weight_1_T;
@@ -862,6 +873,8 @@ void submit_bio_noacct(struct bio *bio)
 				weights[3] = q->bias_1;
 				//true means reject
 				bio->bi_ebusy = q->predictor((char *)feature_vec, 1, weights);
+				if(sysctl_lake_linnos_debug == 2)
+					pr_warn("predicted: ebusy? %d\n", bio->bi_ebusy);
 			}
 
 			// for (i=0; i<26; i++) {
@@ -893,8 +906,8 @@ void submit_bio_noacct(struct bio *bio)
 			
 			//if we predicted slow, avoid this IO
 			if (bio->bi_ebusy) {
-				if (sysctl_lake_linnos_debug) 
-					printk(KERN_ERR "*** generic_make_request_checks ***: IO REJECTED\n");
+				if (sysctl_lake_linnos_debug > 0 )
+					pr_warn("*** IO REJECTED\n");
 				goto not_supported;
 			}
 		}

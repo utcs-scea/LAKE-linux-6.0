@@ -51,6 +51,5 @@ scripts/config --disable SYSTEM_TRUSTED_KEYS
 scripts/config --disable SYSTEM_REVOCATION_KEYS
 
 scripts/config --enable CONFIG_LAKE_LINNOS
-scripts/config --disable CONFIG_LOCALVERSION_AUTO
 
 make olddefconfig
