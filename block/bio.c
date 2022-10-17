@@ -20,17 +20,28 @@
 #include <linux/blk-crypto.h>
 #include <linux/xarray.h>
 #include <linux/sysctl.h>
-
+#include <linux/atomic.h>
+#include <linux/spinlock.h>
+#include <linux/interrupt.h>
 #include <trace/events/block.h>
 #include "blk.h"
 #include "blk-rq-qos.h"
 #include "blk-cgroup.h"
 
+#ifdef CONFIG_LAKE_LINNOS
 unsigned long sysctl_lake_enable_linnos = 0;
 EXPORT_SYMBOL(sysctl_lake_enable_linnos);
 
 unsigned long sysctl_lake_linnos_debug = 0;
 EXPORT_SYMBOL(sysctl_lake_linnos_debug);
+
+unsigned long sysctl_lake_disable_fs_retry = 0;
+EXPORT_SYMBOL(sysctl_lake_disable_fs_retry);
+
+append_qdepth_fn_type append_qdepth_fn = 0;
+EXPORT_SYMBOL(append_qdepth_fn);
+#endif
+
 struct bio_alloc_cache {
 	struct bio		*free_list;
 	unsigned int		nr;
@@ -1557,30 +1568,24 @@ void bio_endio(struct bio *bio)
 			long __secs = bio->bi_sec_size;
 			unsigned long __lat = my_get_duration_ns(bio->bi_ts_start, bio->bi_ts_end);
 
-			// if (__secs == 0) {
-			// 	printk(KERN_ERR "*** Nan ***: WTF, how come it is zero???\n");
-			// }
-
 			//io done, so decrement from q pending ops
-			his_queue_io4k_add(bio->bi_op_type, (long)(-((__secs+7) / 8)), q);
+			his_queue_io4k_add(bio->bi_op_type, (long)(-((__secs+7) / 8)), q); // div by 8 bc 512*8=4k
 			
-			if (sysctl_lake_linnos_debug == 2) {
+			if (unlikely(sysctl_lake_linnos_debug == 2)) {
 				printk(KERN_ERR
 					"*** bio_endio ***: [%p] %s DE-request_queue (%u, %ld, %llu); read %u; write %u\n", bio
 					, bio->bi_bdev->bd_disk->disk_name, bio->bi_op_type, __secs, bio->bi_sec_off
 					, q->nr_io_4k[0], q->nr_io_4k[1]);
-				//printk(KERN_ERR "Here goes a %d\n", bio->bi_op_type);
 			}
 			
 			/* only record read op*/
-			// if ((!(bio->bi_ebusy)) && (bio->bi_op_type == 0)) {
-			// if (1) {
-			if (bio->bi_op_type == 0) {
+			if (bio->bi_op_type == 0 && !bio->bi_ebusy) { //lets try not processing failed ones
 				char *__p_pending, *__p_latency;
 				unsigned int r_pending, w_pending;
 				unsigned long __lat_us;
-
-				spin_lock_irq(&(q->his_lock));
+				unsigned long irqflags;
+				//spin_lock_irq(&(q->his_lock));
+				spin_lock_irqsave(&(q->his_lock), irqflags);
 
 				q->his_io_queue[0][q->his_q_index[0]] = (struct ml_io_info){
 					.nr_io_4k_ss = {bio->bi_nr_io4k[0], bio->bi_nr_io4k[1]},
@@ -1594,20 +1599,12 @@ void bio_endio(struct bio *bio)
 				 */
 				r_pending = bio->bi_nr_io4k[0];
 				w_pending = bio->bi_nr_io4k[1];
-#ifdef DIS_RW
-				if (r_pending > MAX_PENDING) {
-					r_pending = MAX_PENDING;
-				}
-				if (w_pending > MAX_PENDING) {
-					w_pending = MAX_PENDING;
-				}
-				r_pending = r_pending*(MAX_PENDING+1) + w_pending;
-#else
+
 				r_pending += w_pending;
 				if (r_pending > MAX_PENDING) {
 					r_pending = MAX_PENDING;
 				}	
-#endif
+
 				__p_pending = q->his_io_queue[0][q->his_q_index[0]].pad_pending;
 				his_queue_padding(__p_pending, r_pending, LEN_PAD_PENDING);
 				__p_pending[LEN_PAD_PENDING] = '\0';
@@ -1624,36 +1621,11 @@ void bio_endio(struct bio *bio)
 				__p_latency[LEN_PAD_LATENCY] = '\0';
 
 				q->his_q_index[0] = his_q_index_inc((q->his_q_index[0]), 1);
-				spin_unlock_irq(&(q->his_lock));
+				//spin_unlock_irq(&(q->his_lock));
+				spin_unlock_irqrestore(&(q->his_lock), irqflags);
 			}
-
-			// printk(KERN_ERR
-			// 	"*** Nan ***: IO Finished; offset: %llu; cur bytes %ld; latency: %ld\n"
-			// 	, ((bio)->bi_iter).bi_sector-__secs, __secs, __lat);
-			// printk(KERN_ERR
-			// 	"*** Nan ***: I/O Finished; latency: %ld; ebusy: %d; index: %u\n"
-			// 	, __lat, bio->bi_ebusy, q->his_q_index[0]);
 		}
 	}
-	// else {
-	// 	// if (bio->bi_sec_size) {
-	// 		printk(KERN_ERR "*** bio_endio ***: Ha! got you bitch!!!\n");
-	// 	// }
-	// }
-	/* For MLOS: history IO info tracking */
-	// getnstimeofday(&(bio->bi_ts_end));
-	// if (strcmp(bio->bi_disk->disk_name, "nvme0n1")==0) {
-	// 	printk(KERN_ERR
-	// 		"*** Nan ***: IO Finished, latency: %ld\n"
-	// 		, my_get_duration_ns(bio->bi_ts_start, bio->bi_ts_end));
-	// }
-	/* end */
-
-	// /* LinnOS debug */
-	// else if (bio->bi_ebusy) {
-	// 	printk(KERN_ERR "*** in bio_endio ***: here comes a missed one\n");
-	// }
-	// /* end */
 #endif
 
 again:

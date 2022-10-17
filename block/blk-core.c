@@ -41,6 +41,8 @@
 #include <linux/part_stat.h>
 #include <linux/sched/sysctl.h>
 #include <linux/blk-crypto.h>
+#include <linux/spinlock.h>
+#include <linux/interrupt.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/block.h>
@@ -82,37 +84,39 @@ static struct workqueue_struct *kblockd_workqueue;
 
 /* for MLOS: implementation of history queue atomic add operation */
 void inline his_queue_io4k_add(unsigned int op, long nr_io4ks, struct request_queue *q) {
-
+	unsigned long irqflags;
 	if (q && (op>=0) && (op<NR_IO_TYPES)) {
-		spin_lock_irq(&(q->his_lock));
+		//spin_lock_irq(&(q->his_lock));
+		spin_lock_irqsave(&(q->his_lock), irqflags);
 		if ((q->nr_io_4k)[op] < (-nr_io4ks)) {
 			(q->nr_io_4k)[op] = 0;
 		}
 		else {
 			(q->nr_io_4k)[op] += nr_io4ks;
 		}
-		spin_unlock_irq(&(q->his_lock));
+		//spin_unlock_irq(&(q->his_lock));
+		spin_unlock_irqrestore(&(q->his_lock), irqflags);
 	}
 }
 EXPORT_SYMBOL(his_queue_io4k_add);
 
 void inline his_queue_io4k_add_ss(unsigned int op, long nr_io4ks, struct request_queue *q, 
-	struct bio *bio) {
-
+		struct bio *bio) {
+	unsigned long irqflags;
 	if (q && (op>=0) && (op<NR_IO_TYPES)) {
-		spin_lock_irq(&(q->his_lock));
+		//spin_lock_irq(&(q->his_lock));
+		spin_lock_irqsave(&(q->his_lock), irqflags);
 		(q->nr_io_4k)[op] += nr_io4ks;
 		// (q->his_io_queue)[op][(q->his_q_index)[op]].nr_io_4k_ss[op] = (q->nr_io_4k)[op];
 		bio->bi_nr_io4k[0] = q->nr_io_4k[0];
 		bio->bi_nr_io4k[1] = q->nr_io_4k[1];
-		spin_unlock_irq(&(q->his_lock));
+		//spin_unlock_irq(&(q->his_lock));
+		spin_unlock_irqrestore(&(q->his_lock), irqflags);
 	}
 }
 
 void inline his_queue_padding(char *vec, unsigned long decimal, unsigned int len) {
-
 	int i;
-
 	for (i=len-1; i>=0; i--) {
 		// vec[i] = decimal % 10 + '0'; // for the sake of debugging;
 		vec[i] = decimal % 10;
@@ -441,9 +445,6 @@ struct request_queue *blk_alloc_queue(int node_id, bool alloc_srcu)
 
 	q->his_q_index[0] = 0;
 	q->his_q_index[1] = 0;
-	// for (i=0; i<HIS_IO_QSIZE; i++) {
-	// 	q->
-	// }
 	/* end */
 #endif
 
@@ -783,7 +784,7 @@ void submit_bio_noacct(struct bio *bio)
 	ktime_get_ts64(&(bio->bi_ts_start));
 
 	//the stars must align
-	if(sysctl_lake_linnos_debug == 2)
+	if(unlikely(sysctl_lake_linnos_debug == 2))
 		pr_warn("conds disk %s %d %d %d %d\n", bio->bi_bdev->bd_disk->disk_name,
 			sysctl_lake_enable_linnos, q->ml_enabled, q->predictor, !current->bio_list);
 
@@ -801,27 +802,28 @@ void submit_bio_noacct(struct bio *bio)
 
 		/* record number of 4k IOs nr_io_4k in request_queue */
 		/* snapshot the current nr_io_4k and store it in the request's bio */
-		// this is floor of /8. add to q's io count
-		his_queue_io4k_add_ss(__op, (long)((__secs + 7) / 8), q, bio);
+		//increases current IOs by one, store current IOs in bio struct
+		his_queue_io4k_add_ss(__op, (long)((__secs + 7) / 8), q, bio); // div by 8 bc 512*8=4k
 		
-		if (sysctl_lake_linnos_debug == 2) {
+		if (unlikely(sysctl_lake_linnos_debug == 2)) {
 			printk(KERN_ERR
 			"*** generic_make_request_checks ***: [%p] %s EN-request_queue (%u, %d, %llu); reads %u; writes %u\n", bio, 
-			bio->bi_bdev->bd_disk->disk_name, bio->bi_op_type, bio->bi_sec_size, bio->bi_sec_off, q->nr_io_4k[0], q->nr_io_4k[1]);
-		}
-		
-		if(sysctl_lake_linnos_debug == 2) {
+				bio->bi_bdev->bd_disk->disk_name, bio->bi_op_type, bio->bi_sec_size, bio->bi_sec_off, q->nr_io_4k[0], q->nr_io_4k[1]);
 			pr_warn("op %d is read? %d prio %d \n", __op, __op == 0, bio_prio(bio));
 		}
 
 		//if its a read
-		if (__op == 0 && TARGET_PRIO != bio_prio(bio)) {
+		if (__op == 0) {  // && TARGET_PRIO != bio_prio(bio)) {
+		//if (__op == 0 && TARGET_PRIO != bio_prio(bio)) {
+			//3*4*4+4+1 = 53 bytes
 			char feature_vec[(LEN_PAD_PENDING+LEN_PAD_LATENCY)*HIS_IO_QSIZE+LEN_PAD_PENDING+1];
 			unsigned int len_vec = (LEN_PAD_PENDING+LEN_PAD_LATENCY)*HIS_IO_QSIZE+LEN_PAD_PENDING;
 			unsigned int loc_lat = LEN_PAD_PENDING*(HIS_IO_QSIZE+1);
 			unsigned int __index, i, r_pending, w_pending;
+			unsigned long irqflags;
 
-			spin_lock_irq(&(q->his_lock));
+			//spin_lock_irq(&(q->his_lock));
+			spin_lock_irqsave(&(q->his_lock), irqflags);
 			/* feature vector generation */
 			__index = q->his_q_index[0];
 			for (i=0; i<HIS_IO_QSIZE; i++) {
@@ -830,88 +832,46 @@ void submit_bio_noacct(struct bio *bio)
 				memcpy((void*)(&(feature_vec[loc_lat+i*LEN_PAD_LATENCY])),
 					(void*)(q->his_io_queue[0][(__index+i)%HIS_IO_QSIZE].pad_latency), LEN_PAD_LATENCY);
 			}
-			// memcpy((void*)(&(feature_vec[HIS_IO_QSIZE*LEN_PAD_PENDING])),
-			// 	);
+			
 			r_pending = q->nr_io_4k[0];
 			w_pending = q->nr_io_4k[1];
-#ifdef DIS_RW
-			if (r_pending > MAX_PENDING) {
-				r_pending = MAX_PENDING;
+
+			//if 3, do queue depth
+			if(unlikely(sysctl_lake_linnos_debug == 3)) {
+				if(append_qdepth_fn != 0) {
+					append_qdepth_fn(r_pending);
+				}
 			}
-			if (w_pending > MAX_PENDING) {
-				w_pending = MAX_PENDING;
-			}
-			r_pending = r_pending*(MAX_PENDING+1) + w_pending;
-#else
+
 			r_pending += w_pending;
 			if (r_pending > MAX_PENDING) {
 				r_pending = MAX_PENDING;
 			}
-#endif
+
 			his_queue_padding(&(feature_vec[HIS_IO_QSIZE*LEN_PAD_PENDING]), r_pending, LEN_PAD_PENDING);
 			feature_vec[len_vec] = '\0';
 
-			spin_unlock_irq(&(q->his_lock));
+			//spin_unlock_irq(&(q->his_lock));
+			spin_unlock_irqrestore(&(q->his_lock), irqflags);
 
-			// if (test_and_set_bit(0, &offloader_flags)==0) {
-			// 	// bio->bi_ebusy = prediction_model_off((char *)feature_vec);
-			// 	bio->bi_ebusy = prediction_model((char *)feature_vec, 0);
-			// 	test_and_clear_bit(0, &offloader_flags);
-			// }
-			// else {
-			// 	bio->bi_ebusy = prediction_model((char *)feature_vec, 0);
-			// }
-
-			//if offset is not 0, i guess, do the prediction
-			if (sysctl_lake_linnos_debug == 2) {
-				pr_warn("history done, checking __sec_off: %llu  %d\n", __sec_off, __sec_off > 0);
-			}
-			if (__sec_off > 0) {
+			if (likely(__sec_off > 0)) {
 				weights[0] = q->weight_0_T;
 				weights[1] = q->weight_1_T;
 				weights[2] = q->bias_0;
 				weights[3] = q->bias_1;
 				//true means reject
 				bio->bi_ebusy = q->predictor((char *)feature_vec, 1, weights);
-				if(sysctl_lake_linnos_debug == 2)
+				if(unlikely(sysctl_lake_linnos_debug == 2))
 					pr_warn("predicted: ebusy? %d\n", bio->bi_ebusy);
 			}
 
-			// for (i=0; i<26; i++) {
-			// 	printk(KERN_ERR "*** Nan ***: %s prediction: %u, %d\n", bio->bi_disk->disk_name, i, 
-			// 		prediction_model((char *)(test_input[i]), q));
-			// }
-
-			// if (test_and_set_bit(0, &offloader_flags) == 0) {
-			// 	// printk(KERN_ERR "Start main\n");
-			// 	offloader_start = true;
-			// 	while (!offloader_end) {ndelay(1);}
-			// 	offloader_end = false;
-			// 	test_and_clear_bit(0, &offloader_flags);
-			// }
-			// bio->bi_ebusy = false;
-
-			// printk(KERN_ERR
-			// 	"*** Nan ***: block-device %s; has data %d; op %u; offset: %llu; cur bytes %u; "
-			// 	"queue depth %lu\n\t\t index %u; queue (%u, %u, %s, %lu, %s); (%u, %u, %s, %lu, %s); (%u, %u, %s, %lu, %s); (%u, %u, %s, %lu, %s)\n"
-			// 	"Feature vector %s\n"
-			// 	, bio_devname(bio, b), bio_has_data(bio), __op, __sec_off, __secs, 
-			// 	q->nr_requests, q->his_q_index[0], 
-			// 	q->his_io_queue[0][0].nr_io_4k_ss[0], q->his_io_queue[0][0].nr_io_4k_ss[1], (char *)(q->his_io_queue[0][0].pad_pending), q->his_io_queue[0][0].latency, (char *)(q->his_io_queue[0][0].pad_latency),
-			// 	q->his_io_queue[0][1].nr_io_4k_ss[0], q->his_io_queue[0][1].nr_io_4k_ss[1], (char *)(q->his_io_queue[0][1].pad_pending), q->his_io_queue[0][1].latency, (char *)(q->his_io_queue[0][1].pad_latency),
-			// 	q->his_io_queue[0][2].nr_io_4k_ss[0], q->his_io_queue[0][2].nr_io_4k_ss[1], (char *)(q->his_io_queue[0][2].pad_pending), q->his_io_queue[0][2].latency, (char *)(q->his_io_queue[0][2].pad_latency),
-			// 	q->his_io_queue[0][3].nr_io_4k_ss[0], q->his_io_queue[0][3].nr_io_4k_ss[1], (char *)(q->his_io_queue[0][3].pad_pending), q->his_io_queue[0][3].latency, (char *)(q->his_io_queue[0][3].pad_latency),
-			// 	// q->his_io_queue[0][4].nr_io_4k_ss[0], q->his_io_queue[0][4].nr_io_4k_ss[1], (char *)(q->his_io_queue[0][4].pad_pending), q->his_io_queue[0][4].latency, (char *)(q->his_io_queue[0][4].pad_latency),
-			// 	feature_vec);
-			
 			//if we predicted slow, avoid this IO
 			if (bio->bi_ebusy) {
-				if (sysctl_lake_linnos_debug > 0 )
+				if (unlikely(sysctl_lake_linnos_debug > 0))
 					pr_warn("*** IO REJECTED\n");
 				goto not_supported;
 			}
 		}
-		//printk(KERN_ERR "*** : IO ACCEPTED\n");
 	}
 #endif
 

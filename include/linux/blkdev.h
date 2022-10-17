@@ -27,6 +27,8 @@
 #include <linux/xarray.h>
 
 extern unsigned long sysctl_lake_enable_linnos;
+typedef void (*append_qdepth_fn_type)(u32);
+extern append_qdepth_fn_type append_qdepth_fn;
 
 struct module;
 struct request_queue;
@@ -392,33 +394,12 @@ struct blk_independent_access_ranges {
 	#define NR_IO_TYPES 2	/* only record read=0 and write=1 */
 
 	// define the length of pending
-	#define PENDING_3
-	#ifdef PENDING_3
-		#define LEN_PAD_PENDING__ 3
-		#define MAX_PENDING 999
-	#endif
-	#ifdef PENDING_4
-		#define LEN_PAD_PENDING__ 4
-		#define MAX_PENDING 9999
-	#endif
-
-	// #define DIS_RW
-	#ifdef DIS_RW
-		#define LEN_PAD_PENDING (LEN_PAD_PENDING__+LEN_PAD_PENDING__)
-	#else
-		#define LEN_PAD_PENDING LEN_PAD_PENDING__
-	#endif
-
+	#define MAX_PENDING 999
+	#define LEN_PAD_PENDING 3
 	// define the length of latency
-	#define LATENCY_4
-	#ifdef LATENCY_4
-		#define LEN_PAD_LATENCY 4
-		#define MAX_LATENCY 9999
-	#endif
-	#ifdef LATENCY_5
-		#define LEN_PAD_LATENCY 5
-		#define MAX_LATENCY 99999
-	#endif
+	#define LEN_PAD_LATENCY 4
+	#define MAX_LATENCY 9999
+	#define HIS_IO_QSIZE 4
 
 // #define LEN_PAD_LATENCY 5
 struct ml_io_info {
@@ -431,7 +412,7 @@ struct ml_io_info {
 	char 				pad_pending[LEN_PAD_PENDING+1];
 	char 				pad_latency[LEN_PAD_LATENCY+1];
 };
-#define HIS_IO_QSIZE 4
+
 /* end */
 
 #endif
