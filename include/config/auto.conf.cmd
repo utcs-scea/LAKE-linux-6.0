@@ -1486,7 +1486,7 @@ endif
 ifneq "$(srctree)" "."
 include/config/auto.conf: FORCE
 endif
-ifneq "$(CC_VERSION_TEXT)" "gcc (Ubuntu 11.2.0-19ubuntu1) 11.2.0"
+ifneq "$(CC_VERSION_TEXT)" "gcc (Ubuntu 7.5.0-3ubuntu1~18.04) 7.5.0"
 include/config/auto.conf: FORCE
 endif
 ifneq "$(NM)" "nm"
