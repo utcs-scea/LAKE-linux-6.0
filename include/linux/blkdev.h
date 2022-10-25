@@ -583,11 +583,14 @@ struct request_queue {
 	long 				*weight_1_T;
 	long 				*bias_0;
 	long 				*bias_1;
-	//eventually we only have one that is kprobed
-	bool 	(*predictor)(char*, int, long**);
-	bool 	(*gpu_predictor)(char*, int, long**);
-	/* end */
 
+	long 				*weight_2_T;
+	long 				*bias_2;
+	long 				*weight_3_T;
+	long 				*bias_3;
+
+	bool 	(*predictor)(char*, int, long**);
+	
 	/* For MLOS: history IO info tracking */
 	unsigned int 		nr_io_4k[NR_IO_TYPES];
 	struct ml_io_info 	his_io_queue[NR_IO_TYPES][HIS_IO_QSIZE];

@@ -1571,15 +1571,15 @@ void bio_endio(struct bio *bio)
 			//io done, so decrement from q pending ops
 			his_queue_io4k_add(bio->bi_op_type, (long)(-((__secs+7) / 8)), q); // div by 8 bc 512*8=4k
 			
-			if (unlikely(sysctl_lake_linnos_debug == 2)) {
-				printk(KERN_ERR
-					"*** bio_endio ***: [%p] %s DE-request_queue (%u, %ld, %llu); read %u; write %u\n", bio
-					, bio->bi_bdev->bd_disk->disk_name, bio->bi_op_type, __secs, bio->bi_sec_off
-					, q->nr_io_4k[0], q->nr_io_4k[1]);
-			}
+			// if (unlikely(sysctl_lake_linnos_debug == 2)) {
+			// 	printk(KERN_ERR
+			// 		"*** bio_endio ***: [%p] %s DE-request_queue (%u, %ld, %llu); read %u; write %u\n", bio
+			// 		, bio->bi_bdev->bd_disk->disk_name, bio->bi_op_type, __secs, bio->bi_sec_off
+			// 		, q->nr_io_4k[0], q->nr_io_4k[1]);
+			// }
 			
 			/* only record read op*/
-			if (bio->bi_op_type == 0 && !bio->bi_ebusy) { //lets try not processing failed ones
+			if (bio->bi_op_type == 0 && !bio->bi_ebusy) { //lets try not processing failed ones  //XXXX
 				char *__p_pending, *__p_latency;
 				unsigned int r_pending, w_pending;
 				unsigned long __lat_us;
