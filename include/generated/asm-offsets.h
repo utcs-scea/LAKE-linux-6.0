@@ -36,8 +36,8 @@
 #define stack_canary_offset 40 /* offsetof(struct fixed_percpu_data, stack_canary) */
 
 
-#define TASK_threadsp 3096 /* offsetof(struct task_struct, thread.sp) */
-#define TASK_stack_canary 1440 /* offsetof(struct task_struct, stack_canary) */
+#define TASK_threadsp 5400 /* offsetof(struct task_struct, thread.sp) */
+#define TASK_stack_canary 2528 /* offsetof(struct task_struct, stack_canary) */
 
 #define pbe_address 0 /* offsetof(struct pbe, address) */
 #define pbe_orig_address 8 /* offsetof(struct pbe, orig_address) */
@@ -54,6 +54,10 @@
 #define IA32_SIGCONTEXT_ip 56 /* offsetof(struct sigcontext_32, ip) */
 
 #define IA32_RT_SIGFRAME_sigcontext 164 /* offsetof(struct rt_sigframe_ia32, uc.uc_mcontext) */
+
+#define XEN_vcpu_info_mask 1 /* offsetof(struct vcpu_info, evtchn_upcall_mask) */
+#define XEN_vcpu_info_pending 0 /* offsetof(struct vcpu_info, evtchn_upcall_pending) */
+#define XEN_vcpu_info_arch_cr2 16 /* offsetof(struct vcpu_info, arch.cr2) */
 
 #define TDX_MODULE_rcx 0 /* offsetof(struct tdx_module_output, rcx) */
 #define TDX_MODULE_rdx 8 /* offsetof(struct tdx_module_output, rdx) */
@@ -86,5 +90,7 @@
 #define TSS_sp0 4 /* offsetof(struct tss_struct, x86_tss.sp0) */
 #define TSS_sp1 12 /* offsetof(struct tss_struct, x86_tss.sp1) */
 #define TSS_sp2 20 /* offsetof(struct tss_struct, x86_tss.sp2) */
+
+#define VMX_spec_ctrl 8088 /* offsetof(struct vcpu_vmx, spec_ctrl) */
 
 #endif

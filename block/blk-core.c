@@ -788,11 +788,12 @@ void submit_bio_noacct(struct bio *bio)
 		pr_warn("conds disk %s %d %d %d %d\n", bio->bi_bdev->bd_disk->disk_name,
 			sysctl_lake_enable_linnos, q->ml_enabled, q->predictor, !current->bio_list);
 
+	//if (q->ml_enabled && bio->bi_first) { //XXXX
 	if (sysctl_lake_enable_linnos && q->ml_enabled && q->predictor!=0 && !current->bio_list) {
 		unsigned int __op = bio_op(bio);
 		sector_t __sec_off = ((bio)->bi_iter).bi_sector;
 		unsigned int __secs = bio_sectors(bio);
-		long *weights[4] = {0,0,0,0};
+		long *weights[8] = {0,0,0,0,0,0,0,0};
 
 		/* assignments for later use in bio_endio */
 		bio->bi_ebusy = false;
@@ -805,14 +806,14 @@ void submit_bio_noacct(struct bio *bio)
 		//increases current IOs by one, store current IOs in bio struct
 		his_queue_io4k_add_ss(__op, (long)((__secs + 7) / 8), q, bio); // div by 8 bc 512*8=4k
 		
-		if (unlikely(sysctl_lake_linnos_debug == 2)) {
-			printk(KERN_ERR
-			"*** generic_make_request_checks ***: [%p] %s EN-request_queue (%u, %d, %llu); reads %u; writes %u\n", bio, 
-				bio->bi_bdev->bd_disk->disk_name, bio->bi_op_type, bio->bi_sec_size, bio->bi_sec_off, q->nr_io_4k[0], q->nr_io_4k[1]);
-			pr_warn("op %d is read? %d prio %d \n", __op, __op == 0, bio_prio(bio));
-		}
+		// if (unlikely(sysctl_lake_linnos_debug == 2)) {
+		// 	printk(KERN_ERR
+		// 	"*** generic_make_request_checks ***: [%p] %s EN-request_queue (%u, %d, %llu); reads %u; writes %u\n", bio, 
+		// 		bio->bi_bdev->bd_disk->disk_name, bio->bi_op_type, bio->bi_sec_size, bio->bi_sec_off, q->nr_io_4k[0], q->nr_io_4k[1]);
+		// 	pr_warn("op %d is read? %d prio %d \n", __op, __op == 0, bio_prio(bio));
+		// }
 
-		//if its a read
+		//if its a read //XXXX
 		if (__op == 0) {  // && TARGET_PRIO != bio_prio(bio)) {
 		//if (__op == 0 && TARGET_PRIO != bio_prio(bio)) {
 			//3*4*4+4+1 = 53 bytes
@@ -854,11 +855,18 @@ void submit_bio_noacct(struct bio *bio)
 			//spin_unlock_irq(&(q->his_lock));
 			spin_unlock_irqrestore(&(q->his_lock), irqflags);
 
-			if (likely(__sec_off > 0)) {
+			if (likely(__sec_off > 0)) { //yeah...
 				weights[0] = q->weight_0_T;
 				weights[1] = q->weight_1_T;
 				weights[2] = q->bias_0;
 				weights[3] = q->bias_1;
+
+				weights[4] = q->weight_2_T;
+				weights[5] = q->bias_2;
+
+				weights[6] = q->weight_3_T;
+				weights[7] = q->bias_3;
+
 				//true means reject
 				bio->bi_ebusy = q->predictor((char *)feature_vec, 1, weights);
 				if(unlikely(sysctl_lake_linnos_debug == 2))
