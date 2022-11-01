@@ -10,3 +10,5 @@ cp $CFG .config
 source ./set_configs.sh
 
 source ./compile_install.sh
+
+echo "Success!"
