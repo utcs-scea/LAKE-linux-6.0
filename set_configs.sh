@@ -50,6 +50,6 @@ scripts/config --module CONFIG_CRYPTO_AES_NI_INTEL
 scripts/config --disable SYSTEM_TRUSTED_KEYS
 scripts/config --disable SYSTEM_REVOCATION_KEYS
 
-#scripts/config --enable CONFIG_LAKE_LINNOS
+scripts/config --enable CONFIG_LAKE_LINNOS
 
 make olddefconfig

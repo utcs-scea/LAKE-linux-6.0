@@ -168,3 +168,11 @@ sphinx_*/
 
 # Rust analyzer configuration
 /rust-project.json
+include/config/auto.conf
+include/config/auto.conf.cmd
+include/generated/asm-offsets.h
+include/generated/autoconf.h
+include/generated/bounds.h
+include/generated/compile.h
+include/generated/timeconst.h
+.config.old
